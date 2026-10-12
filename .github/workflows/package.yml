@@ -1,19 +1,32 @@
 name: Packages
 on:
   workflow_dispatch:
+    inputs:
+      hosted_platforms:
+        description: Also build and test Windows/macOS on GitHub-hosted runners
+        type: boolean
+        default: false
+      install_smoke:
+        description: Install, restart and remove the Debian package on the runner guest
+        type: boolean
+        default: false
   pull_request:
     paths: ['packaging/**', '.github/workflows/package.yml', 'about.toml', 'Cargo.lock']
   push:
     tags: ['v*']
 permissions:
   contents: read
+concurrency:
+  group: packages-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
 jobs:
   package:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+        os: ${{ fromJSON(inputs.hosted_platforms && '["linux", "windows", "macos"]' || '["linux"]') }}
+    runs-on: ${{ fromJSON(matrix.os == 'linux' && '["self-hosted", "linux", "x64", "wg-easy-ci"]' || matrix.os == 'windows' && '["windows-latest"]' || '["macos-latest"]') }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -97,7 +110,7 @@ jobs:
           pathlib.Path('dist/SHA256SUMS').write_text(''.join(f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n' for p in files))
           pathlib.Path('dist/package-measurements.json').write_text(json.dumps({p.name:{'bytes':p.stat().st_size} for p in files},indent=2))
       - name: Install Linux service and verify lifecycle
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && inputs.install_smoke
         env:
           WGE_INSTALLED_SERVICE_TEST: '1'
           WGE_SERVICE_SMOKE_STATE: ${{ runner.temp }}/wge-service-smoke.json
