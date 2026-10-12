@@ -1,0 +1,15 @@
+[package]
+name = "wge-gui"
+description = "Desktop app: tunnel list, add-tunnel screen and tray"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "wg-easy"
+path = "src/main.rs"
+
+[dependencies]
+wge-config.workspace = true
+wge-ipc.workspace = true

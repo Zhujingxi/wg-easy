@@ -1,0 +1,15 @@
+[package]
+name = "wge-engine"
+description = "Userspace WireGuard tunnel engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+wge-config.workspace = true
+
+gotatun.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tun.workspace = true

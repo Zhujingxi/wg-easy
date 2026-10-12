@@ -1,0 +1,12 @@
+[package]
+name = "wge-platform"
+description = "Per-OS tun device, route and DNS handling"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+wge-config.workspace = true
+
+thiserror.workspace = true

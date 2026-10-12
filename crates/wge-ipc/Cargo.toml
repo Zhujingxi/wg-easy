@@ -1,0 +1,12 @@
+[package]
+name = "wge-ipc"
+description = "Protocol types shared by the daemon and the GUI"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+wge-config.workspace = true
+
+thiserror.workspace = true

@@ -1,0 +1,20 @@
+[package]
+name = "wge-daemon"
+description = "Privileged service that owns the tunnels"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "wg-easy-daemon"
+path = "src/main.rs"
+
+[dependencies]
+wge-config.workspace = true
+wge-engine.workspace = true
+wge-ipc.workspace = true
+wge-platform.workspace = true
+
+anyhow.workspace = true
+tokio.workspace = true
