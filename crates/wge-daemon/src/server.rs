@@ -52,6 +52,34 @@ where
 }
 
 #[cfg(unix)]
+fn prepare_socket_directory(directory: &std::path::Path) -> std::io::Result<()> {
+    use std::fs;
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+    #[cfg(target_os = "linux")]
+    let mode = 0o755;
+    #[cfg(target_os = "macos")]
+    let mode = 0o750;
+    match fs::DirBuilder::new().mode(mode).create(directory) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error),
+    }
+    let metadata = fs::symlink_metadata(directory)?;
+    if !metadata.is_dir()
+        || metadata.file_type().is_symlink()
+        || metadata.uid() != rustix::process::geteuid().as_raw()
+        || metadata.mode() & 0o022 != 0
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "Unsafe socket directory",
+        ));
+    }
+    // Service umasks protect files, but the GUI must traverse this socket directory.
+    fs::set_permissions(directory, fs::Permissions::from_mode(mode))
+}
+
+#[cfg(unix)]
 pub async fn serve_unix<N: Network + 'static>(
     service: Service<N>,
     endpoint: &std::path::Path,
@@ -64,17 +92,7 @@ pub async fn serve_unix<N: Network + 'static>(
     let directory = endpoint
         .parent()
         .ok_or_else(|| std::io::Error::other("Missing socket directory"))?;
-    let metadata = fs::symlink_metadata(directory)?;
-    if !metadata.is_dir()
-        || metadata.file_type().is_symlink()
-        || metadata.uid() != rustix::process::geteuid().as_raw()
-        || metadata.mode() & 0o022 != 0
-    {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            "Unsafe socket directory",
-        ));
-    }
+    prepare_socket_directory(directory)?;
     let lock = OpenOptions::new()
         .read(true)
         .write(true)
@@ -180,4 +198,38 @@ pub async fn serve_windows<N: Network + 'static>(
         .await
         .map_err(|error| std::io::Error::other(error.message))?;
     result
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+
+    #[test]
+    fn socket_directory_corrects_umask_permissions_and_rejects_unsafe_paths() {
+        let temporary = tempfile::tempdir().unwrap();
+        let directory = temporary.path().join("socket");
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+        prepare_socket_directory(&directory).unwrap();
+        #[cfg(target_os = "linux")]
+        let expected = 0o755;
+        #[cfg(target_os = "macos")]
+        let expected = 0o750;
+        assert_eq!(
+            std::fs::metadata(&directory).unwrap().mode() & 0o777,
+            expected
+        );
+        let link = temporary.path().join("link");
+        symlink(&directory, &link).unwrap();
+        assert_eq!(
+            prepare_socket_directory(&link).unwrap_err().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o777)).unwrap();
+        assert_eq!(
+            prepare_socket_directory(&directory).unwrap_err().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+    }
 }

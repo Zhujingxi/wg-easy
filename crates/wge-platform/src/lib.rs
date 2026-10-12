@@ -28,6 +28,8 @@ mod linux_policy;
 mod macos;
 #[cfg(target_os = "macos")]
 mod macos_filter;
+#[cfg(all(test, any(windows, target_os = "macos")))]
+mod native_smoke;
 #[cfg(windows)]
 pub mod windows;
 #[cfg(windows)]

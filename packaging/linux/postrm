@@ -1,0 +1,6 @@
+#!/bin/sh
+set -e
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload
+fi
+# Keep private configs on removal and purge; deletion must be deliberate.

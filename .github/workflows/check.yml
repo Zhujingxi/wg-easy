@@ -1,0 +1,88 @@
+name: Check
+on:
+  push:
+    branches: [main, 'feat/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  workspace:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Linux desktop build libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake clang pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libegl1-mesa-dev libvulkan-dev libpipewire-0.3-dev libclang-dev libasound2-dev xvfb mesa-vulkan-drivers fonts-noto-cjk
+      - run: cargo fmt --all -- --check
+      - run: cargo check --workspace --locked
+      - run: cargo test --workspace --locked
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo build --workspace --locked
+      - name: Native desktop acceptance with software Vulkan
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p measurements/gui
+          export WGE_PREVIEW_DIR="$PWD/measurements/gui"
+          export WGE_PREVIEW_HEADLESS=1
+          export VK_DRIVER_FILES="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
+          test -n "$VK_DRIVER_FILES"
+          export LIBGL_ALWAYS_SOFTWARE=1
+          xvfb-run -a -s '-screen 0 1280x900x24' cargo test -p wge-gui --test desktop-preview --locked 2>&1 | tee measurements/gui/acceptance.log
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux' && always()
+        with:
+          name: desktop-acceptance-${{ github.sha }}
+          path: measurements/gui/
+          if-no-files-found: warn
+  security:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,cargo-audit
+      - run: cargo deny check
+      - run: cargo audit
+  network:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build native namespace tests
+        run: cargo test -p wge-engine -p wge-platform --release --no-run --locked
+      - name: Encrypted IPv4/IPv6, leak prevention and crash recovery
+        run: |
+          mkdir -p measurements
+          export WGE_HOST_NETNS="$(readlink /proc/self/ns/net)"
+          export WGE_METRICS_PATH="$PWD/measurements/tunnel-linux.json"
+          sudo --preserve-env=WGE_HOST_NETNS,WGE_METRICS_PATH env PATH="$PATH" CARGO_HOME="$HOME/.cargo" RUSTUP_HOME="$HOME/.rustup" unshare --net cargo test -p wge-engine -p wge-platform --release --locked -- --ignored --nocapture --test-threads=1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tunnel-measurements-${{ github.sha }}
+          path: measurements/
+          if-no-files-found: error
+  fuzz:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - run: cargo fuzz run parse -- -max_total_time=60 -max_len=1048576

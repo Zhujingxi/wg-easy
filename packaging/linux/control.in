@@ -1,0 +1,12 @@
+Package: wireguardeasy-desktop
+Version: 0.1.0
+Section: net
+Priority: optional
+Architecture: amd64
+Maintainer: wg-easy contributors <noreply@github.com>
+Depends: libc6 (>= 2.39), libgcc-s1, libstdc++6, libxcb1, libgbm1, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libegl1, libvulkan1, libpipewire-0.3-0, systemd, systemd-resolved, fonts-noto-cjk
+Homepage: https://github.com/Zhujingxi/wg-easy
+Description: Native desktop client for WireGuard
+ One screen to set up a tunnel and one switch to connect.
+ Includes the userspace tunnel engine and background service.
+ Unrelated to the wg-easy/wg-easy server project.

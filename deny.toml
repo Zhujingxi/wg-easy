@@ -1,0 +1,31 @@
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+ignore = [
+    { id = "RUSTSEC-2024-0436", reason = "Unmaintained paste macro is transitive through netconfig's netlink types; no reported vulnerability. Replace when netconfig updates." },
+    { id = "RUSTSEC-2024-0384", reason = "Unmaintained instant is a GPUI transitive dependency; no reported vulnerability. Track the selected GPUI release." },
+    { id = "RUSTSEC-2024-0370", reason = "Unmaintained proc-macro-error is a build-time transitive macro dependency; no reported vulnerability." },
+    { id = "RUSTSEC-2025-0134", reason = "Unmaintained rustls-pemfile comes through GPUI; this application instantiates no HTTP client." },
+    { id = "RUSTSEC-2026-0206", reason = "Unmaintained rustybuzz is required by the selected GPUI text stack; no reported vulnerability. Track GPUI's replacement." },
+    { id = "RUSTSEC-2026-0192", reason = "Unmaintained ttf-parser is required by GPUI text rendering; no reported vulnerability. Track GPUI's replacement." },
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.8
+allow = [
+    "MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", "BSD-3-Clause",
+    "ISC", "Unicode-3.0", "Zlib", "0BSD", "CC0-1.0", "BSL-1.0", "OpenSSL", "MPL-2.0", "WTFPL",
+    "Unlicense", "bzip2-1.0.6",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

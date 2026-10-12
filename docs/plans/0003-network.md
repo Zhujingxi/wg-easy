@@ -98,7 +98,14 @@ operations run in isolated user/network namespaces guarded against host use:
 
 Native Windows WFP/NRPT/SCM and macOS PF/SystemConfiguration behavior still need
 privileged smoke tests on those operating systems; cross-compilation cannot
-establish runtime behavior. Vendored pfctl emits two upstream warnings in its
+establish runtime behavior. The opt-in `native_full_tunnel_smoke` test now covers
+real dual-stack tun packets, native DNS/filter application, normal cleanup and
+journal recovery, with a separate recovery watchdog. See
+`docs/native-network-smoke.md` for elevated disposable-VM commands and limits.
+PF token ownership now uses the kernel process name rather than assuming it
+matches the executable's basename. Windows service stop delivery uses a Tokio
+oneshot so a failed service startup cannot strand a blocking receiver thread.
+Vendored pfctl emits two upstream warnings in its
 unused NAT pool code; wg-easy uses only stateless filtering rules.
 
 ## Resolved checks and remaining limits

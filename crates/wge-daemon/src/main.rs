@@ -16,20 +16,6 @@ async fn service(
     #[cfg(unix)]
     {
         let endpoint = std::path::Path::new(wge_ipc::DEFAULT_ENDPOINT);
-        let directory = endpoint
-            .parent()
-            .expect("fixed service endpoint has a parent");
-        let mut builder = std::fs::DirBuilder::new();
-        use std::os::unix::fs::DirBuilderExt;
-        #[cfg(target_os = "linux")]
-        builder.mode(0o755);
-        #[cfg(target_os = "macos")]
-        builder.mode(0o750);
-        match builder.create(directory) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(error.into()),
-        }
         wge_daemon::server::serve_unix(service, endpoint, shutdown).await?;
     }
     #[cfg(windows)]

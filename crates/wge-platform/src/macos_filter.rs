@@ -51,13 +51,22 @@ pub(crate) fn prepare(
             "PF is configured to skip a network interface. Remove that skip rule before connecting.",
         ));
     }
-    let process_name = std::env::current_exe()?
-        .file_name()
-        .ok_or_else(|| failure("Invalid daemon executable name"))?
-        .to_string_lossy()
-        .chars()
-        .take(63)
-        .collect();
+    let mut process_name = [0_u8; 64];
+    // PF records the kernel's process name, which can differ from an executable basename.
+    // SAFETY: the current PID and writable buffer are valid throughout proc_name.
+    if unsafe {
+        libc::proc_name(
+            std::process::id() as i32,
+            process_name.as_mut_ptr().cast(),
+            process_name.len() as u32,
+        )
+    } <= 0
+    {
+        return Err(failure("Cannot identify the daemon process"));
+    }
+    let process_name =
+        String::from_utf8_lossy(process_name.split(|b| *b == 0).next().unwrap_or_default())
+            .into_owned();
     Ok(State {
         anchor,
         interface: interface.to_owned(),
@@ -212,6 +221,18 @@ fn owns_token(state: &State, token: &Token) -> bool {
     token.pid == state.pid
         && token.name() == state.process_name
         && !state.previous_tokens.contains(&value)
+}
+
+#[cfg(test)]
+pub(crate) fn smoke_matches(state: &State, applied: bool) -> Result<bool, Error> {
+    let mut pf = PfCtl::new().map_err(failure)?;
+    let anchor = pf
+        .anchor_exists(&state.anchor, AnchorKind::Filter)
+        .map_err(failure)?;
+    let reference = tokens(&open_pf()?)?
+        .iter()
+        .any(|token| owns_token(state, token));
+    Ok(anchor == applied && reference == applied)
 }
 
 fn open_pf() -> Result<File, Error> {

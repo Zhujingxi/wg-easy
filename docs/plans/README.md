@@ -29,27 +29,23 @@ root holds the scope and the rules; plans hold how a specific piece gets built.
 | [0002: Local service](0002-service.md) | done |
 | [0003: Native networking](0003-network.md) | done |
 | [0004: Native desktop](0004-desktop.md) | done |
+| [0005: Delivery and verification](0005-delivery.md) | in progress |
 | [0007: Service trust-boundary review](0007-service-review.md) | done |
 
-## To verify before the first plans
+## Initial feasibility checks
 
-These are still guesses or unchecked. Settle each one early, and record the
-result in the plan that depends on it.
-
-- **GPUI memory:** measure an empty window on Linux. No real number exists yet.
-- **GPUI dependency:** the `gpui` crate on crates.io is stale (0.2.2), and GPUI
-  Kit pins a crate named `gpui-pre`. Confirm who publishes it before depending
-  on it.
-- **GPUI without a GPU:** find out what happens in a VM or over remote desktop.
-- **Japanese input:** confirm IME and font fallback work in GPUI text fields on
-  Linux.
-- **Tray process:** decide whether the tray lives in the GUI process or in a
-  small separate one, based on the measured memory.
-- **`wintun.dll` licence:** read the redistribution terms of the prebuilt DLL
-  before the first Windows build.
-- **Pure Rust tray on Linux:** confirm `tray-icon` pulls in GTK there, which is
-  the reason for using `ksni` instead.
-- **macOS service install:** find a way to register the daemon from an unsigned
-  app without running external programs.
-- **Package names:** the GitHub name `wg-easy/wg-easy` is taken, and the crate
-  name on crates.io is unchecked.
+- **GPUI:** the empty Linux debug window measured 271 MiB RSS; tray-only startup
+  measured 74 MiB. The tray stays in the GUI process without creating a window.
+  Plan 0004 records the pinned Longbridge GPUI Kit/GPUI snapshot provenance.
+- **Graphics:** native acceptance passes with Mesa software Vulkan under Xvfb.
+  With no usable graphics backend, GPUI cannot open a window; there is no fallback UI.
+- **Japanese:** font fallback, marked-text conversion and commit through GPUI's
+  real input handler pass. OS candidate-picker acceptance remains a hardware check.
+- **Linux tray:** ksni uses StatusNotifier D-Bus; the GTK-backed tray-icon path
+  is excluded from Linux builds.
+- **Wintun:** the pinned, signed prebuilt DLL permits unchanged redistribution
+  with its license. Packages verify its SHA256 and include the original notice.
+- **macOS service:** the unsigned Installer package installs a LaunchDaemon and
+  requests reboot. The application itself never invokes a service-management command.
+- **Names:** installer names use `wireguardeasy-desktop`; the repository is
+  `Zhujingxi/wg-easy`. These workspace crates are not published to crates.io.

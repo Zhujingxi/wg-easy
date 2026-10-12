@@ -1,0 +1,32 @@
+[Unit]
+Description=WireGuard Easy desktop tunnel service
+After=network.target systemd-resolved.service
+Wants=systemd-resolved.service
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/wireguardeasy/wg-easy-daemon
+Restart=on-failure
+RestartSec=2
+RuntimeDirectory=wireguardeasy
+RuntimeDirectoryMode=0755
+StateDirectory=wireguardeasy
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_DAC_OVERRIDE
+DevicePolicy=closed
+DeviceAllow=/dev/net/tun rw
+ReadWritePaths=/var/lib/wireguardeasy /run/wireguardeasy
+TimeoutStopSec=45
+
+[Install]
+WantedBy=multi-user.target
