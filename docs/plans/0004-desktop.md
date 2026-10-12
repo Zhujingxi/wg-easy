@@ -202,14 +202,14 @@ claim a live privileged-daemon GUI session.
 | NW-1 | Shared IPv4/IPv6 parsing and default endpoint port; form round trips preserve imported route/endpoint choices. |
 | LN-1–3 | Complete locale files and runtime locale discovery; EN/JA screenshots/key parity and native Japanese composition. OS IME picker remains a desktop acceptance check. |
 | SP-3, PF-1 | No network client or engine/platform GUI dependency; Tokio owns IPC only. |
-| PF-3 | Native harness emits RSS and screenshots; package CI owns throughput, idle CPU and package size tracking. |
+| PF-3 | Native harness emits RSS and screenshots; CI retains throughput, idle CPU and package size measurements. |
 
 Native keyboard assertions dispatch real Tab, Space and Enter events: Tab moves
 from the server key to the traffic switch, Space toggles it, and Tab/Enter from
 DNS opens Advanced. The existing Kit focus traversal and activation work without
-custom app keybindings. Network containment/recovery, installation and native
-Windows/macOS behavior are verified by their owning workstreams, not simulated
-by GUI screenshots.
+custom app keybindings. Network containment/recovery and installation have
+separate platform tests. Native Windows/macOS behavior remains unverified;
+GUI screenshots do not establish it.
 
 The pinned toolkit does not scroll a newly focused control into view: a native
 reproduction tabbed to an input at y=970 in a 400-pixel viewport. A shared small

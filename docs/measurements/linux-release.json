@@ -1,0 +1,12 @@
+{
+  "idle_cpu_percent": 0.03811680422213155,
+  "payload_bytes": 4194304,
+  "resident_bytes": 7692288,
+  "scenario": "native-linux-userspace-loopback",
+  "throughput_mbps": 1683.7162190404606,
+  "measured_date": "2026-10-13",
+  "profile": "release",
+  "rustc": "1.97.1",
+  "cpu": "Intel Core i9-13900K",
+  "scope": "two gotatun engines, encrypted loopback UDP in isolated Linux namespace; not a WAN or single-daemon benchmark"
+}

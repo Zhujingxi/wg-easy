@@ -62,8 +62,8 @@ They are not stored in the desktop's preferences directory.
 Rust edition 2024, with the minimum compiler version declared in `Cargo.toml`.
 On Debian/Ubuntu, install the usual C/C++ build toolchain plus `cmake`, `clang`,
 `pkg-config`, `libxkbcommon-dev`, `libxkbcommon-x11-dev`, `libwayland-dev`,
-`libxcb1-dev`, `libegl1-mesa-dev`, `libvulkan-dev`, `libpipewire-0.3-dev`,
-`libclang-dev` and `libasound2-dev`. Then:
+`libxcb1-dev`, `libegl1-mesa-dev`, `libgbm-dev`, `libfontconfig1-dev`, `libvulkan-dev`,
+`libpipewire-0.3-dev`, `libclang-dev` and `libasound2-dev`. Then:
 
 ```sh
 cargo build --workspace --locked
@@ -78,13 +78,19 @@ network tests use isolated Linux namespaces and refuse to alter the host network
 ```sh
 WGE_HOST_NETNS="$(readlink /proc/self/ns/net)" \
   unshare --user --map-root-user --net \
-  cargo test -p wge-engine -p wge-platform -- --ignored --nocapture --test-threads=1
+  cargo test -p wge-engine -p wge-platform -- namespace_ --ignored --nocapture --test-threads=1
 ```
+
+With `/dev/net/tun`, `systemd-resolved` and `dbus-daemon` already available,
+`./scripts/test-resolved.sh` checks DNS using a private resolver and system bus
+inside user, mount, PID and network namespaces. Run it as an ordinary user.
 
 See [the PRD](docs/PRD.md), [implementation plans](docs/plans/README.md) and
 [verification notes](docs/verification.md) for scope and the evidence behind
-platform support. CI runs on Linux, Windows and macOS, audits dependencies and
-licenses, fuzzes config input, and retains tunnel/package measurements.
+platform support. Linux CI runs builds in disposable containers, isolated network
+tests, dependency/license audits and config fuzzing, and retains tunnel/package
+measurements. Windows/macOS builds and native checks are manual opt-in jobs;
+GitHub-hosted execution currently requires restoring the account billing allowance.
 
 ## Architecture
 

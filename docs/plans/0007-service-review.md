@@ -60,8 +60,9 @@ Fix concrete issues with focused regression tests without changing the UI API.
 - IPC all-target checks pass for Windows GNU and macOS arm64. The Windows
   private-directory helper passes the platform all-target check; native ACL
   descriptor tests are included for Windows CI.
-- Full daemon cross-checks could not complete here: AWS-LC requires the missing
-  MinGW compiler or macOS C toolchain/SDK. Native CI must check those builds.
+- Full Windows GNU daemon/IPC all-target checks, strict Clippy and the actual
+  daemon executable link pass with MinGW and NASM, including AWS-LC assembly.
+  macOS full-daemon cross-compilation still requires its C toolchain/SDK.
 - Packaging/CI were reviewed read-only. MSI creates a matching protected state
   ACL; runtime storage now also verifies it. Native Windows/macOS DNS, filter,
   installation and service runtime checks remain necessary.

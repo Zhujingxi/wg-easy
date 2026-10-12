@@ -1,0 +1,12 @@
+{
+  "measured_date": "2026-10-13",
+  "profile": "release",
+  "source_revision": "0f78d223e37178bbd1492ed7fd01d6d65c7cba8e",
+  "pull_request_head": "ee7403fde3284e8ec9d4b075a4678b3f08000027",
+  "workflow_run": 38291071314,
+  "artifact_id": 11767520673,
+  "package": "wireguardeasy-desktop_0.1.0_amd64.deb",
+  "bytes": 13765828,
+  "sha256": "7413ebec793bd1200cf6a5a10b1fd0157d40c86a0add87adf876a3af6ae263f6",
+  "scope": "self-hosted Linux CI build in disposable Ubuntu 24.04 container; downloaded archive digest, contents, notices and permissions verified; package not installed"
+}

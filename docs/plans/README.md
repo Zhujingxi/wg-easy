@@ -29,8 +29,9 @@ root holds the scope and the rules; plans hold how a specific piece gets built.
 | [0002: Local service](0002-service.md) | done |
 | [0003: Native networking](0003-network.md) | done |
 | [0004: Native desktop](0004-desktop.md) | done |
-| [0005: Delivery and verification](0005-delivery.md) | in progress |
+| [0005: Delivery and verification](0005-delivery.md) | done |
 | [0007: Service trust-boundary review](0007-service-review.md) | done |
+| [0008: Real Linux resolver verification](0008-resolved-verification.md) | done |
 
 ## Initial feasibility checks
 

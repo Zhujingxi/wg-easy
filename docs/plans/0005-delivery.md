@@ -1,6 +1,9 @@
 # 0005: Installable desktop packages and release verification
 
-Status: in progress
+Status: done
+
+Implementation is complete. Native platform and installer acceptance remains
+pending where listed below and in [verification](../verification.md).
 
 ## Goal
 
@@ -24,10 +27,12 @@ SIDs. Local accounts may manage their own tunnels; traffic conflicts are checked
 across accounts. Installer-owned service directories cannot be modified by GUI
 users. On Linux use a local-user socket with a non-writable parent; on macOS use
 the system staff group. Windows installer ACLs restrict stored keys to SYSTEM and
-Administrators. Uninstall stops the service before removing files and keeps
-private configurations unless the user deliberately removes them.
+Administrators. Debian/MSI uninstall stops the service before removing files and
+keeps private configurations unless the user deliberately removes them. macOS
+removal requires manually unloading the LaunchDaemon and removing its files.
 
-CI checks formatting, all workspace tests and Clippy on Linux, Windows and macOS.
+CI checks formatting, all workspace tests and Clippy on Linux by default.
+Windows/macOS jobs are manual opt-in while hosted runners are billing-blocked.
 Linux also runs real engines inside network namespaces, fuzzes the parser with
 nightly instrumentation, and records tunnel throughput/idle CPU/RSS. Release jobs
 record each package's compressed size and attach SHA256 checksums. cargo-deny
@@ -56,16 +61,22 @@ CI runners. Require workspace checks for every OS, native networking namespace
 checks on Linux, and smoke-test the real desktop on Linux. Preserve exact scope of
 manual GPU/IME and native OS testing in the release checklist.
 
-Package jobs install their artifact and run the actual daemon's authenticated
-create/save/export/connect lifecycle, close/reopen IPC, restart the service and
-verify the saved tunnel stays off. Linux tests reinstall/upgrade as well. Native
-Windows/macOS full-tunnel smoke checks exercise DNS, filters, IPv4/IPv6 tun traffic
-and journal restoration in disposable runners with a recovery watchdog.
+The persistent Linux runner builds in disposable Ubuntu containers and never
+installs the application or starts its service. Build libraries are installed
+only inside those containers; network checks use unprivileged namespaces.
+Optional hosted Windows/macOS package jobs install their artifact and run the
+actual daemon's authenticated create/save/export/connect lifecycle, close/reopen
+IPC, restart the service and verify the saved tunnel stays off. Their native
+full-tunnel smoke checks exercise DNS, filters, IPv4/IPv6 tun traffic and journal
+restoration in disposable runners with a recovery watchdog.
 
 The Linux daemon lifecycle also passed locally in isolated user, mount and network
 namespaces, using temporary service directories and a real tun interface. Desktop
 acceptance under Xvfb/software Vulkan verifies clipboard and screen QR import,
 Japanese input-handler composition, component translation and secret-state cleanup.
+A real systemd-resolved service also passes split/full DNS, restoration and crash
+recovery checks using a private system bus and resolver inside isolated namespaces
+([plan 0008](0008-resolved-verification.md)).
 
 ## Out of scope
 
@@ -74,6 +85,12 @@ automatic reconnect are excluded by the PRD.
 
 ## Open questions
 
-The first CI runs establish measured budgets. Native Windows/macOS networking
-and Japanese IME input require their actual desktops; cross-compilation alone
-cannot establish their runtime behavior.
+The first representative measurements will establish budgets. Local release
+tunnel measurements and a real Debian archive are recorded in verification.md.
+GitHub-hosted runners are blocked by account billing. Linux verification uses
+the user's Proxmox runner with labels `self-hosted, linux, x64, wg-easy-ci`.
+Only builds and isolated tests are authorized on that persistent guest; the
+Debian install smoke is excluded from the workflow. Hosted Windows/macOS jobs
+are available through the optional manual input. Native Windows/macOS installer/network acceptance and
+OS Japanese candidate-picker checks remain explicit release-validation limits.
+Cross-compilation is not runtime evidence.
