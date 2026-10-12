@@ -159,6 +159,35 @@ fn rules(state: &State) -> Result<Vec<FilterRule>, Error> {
                 .quick(true),
         )?);
     }
+    // Snooping switches require listener reports to keep neighbor-discovery multicast flowing.
+    for kind in [
+        Icmp6Type::ListenerReport,
+        Icmp6Type::ListenerDone,
+        Icmp6Type::ListenerReportV2,
+    ] {
+        rules.push(rule(
+            FilterRuleBuilder::default()
+                .action(pass)
+                .direction(Direction::Out)
+                .proto(Proto::IcmpV6)
+                .to(pfctl::Ip::Net(
+                    "ff02::/16".parse().expect("fixed multicast prefix"),
+                ))
+                .icmp_type(Some(IcmpType::Icmp6(kind)))
+                .quick(true),
+        )?);
+    }
+    rules.push(rule(
+        FilterRuleBuilder::default()
+            .action(pass)
+            .direction(Direction::In)
+            .proto(Proto::IcmpV6)
+            .from(pfctl::Ip::Net(
+                "fe80::/10".parse().expect("fixed link-local prefix"),
+            ))
+            .icmp_type(Some(IcmpType::Icmp6(Icmp6Type::ListenerQuery)))
+            .quick(true),
+    )?);
     rules.push(rule(
         FilterRuleBuilder::default()
             .action(FilterRuleAction::Drop(DropAction::Drop))

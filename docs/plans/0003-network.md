@@ -43,6 +43,8 @@ PF skip-interface rules are rejected. PF enable references are owned individuall
 journaled before acquisition and recovered using process identity and boot time.
 Other users' references and firewall rules are retained. This is active-tunnel
 containment, not a persistent kill switch; normal shutdown removes the filters.
+All three platforms preserve IPv6 multicast listener maintenance alongside
+neighbor discovery so multicast snooping does not silently break the uplink.
 
 DNS uses systemd-resolved per-link routing domains on Linux, an owned NRPT policy
 on Windows and supplemental SystemConfiguration resolvers on macOS. Full tunnels
@@ -79,7 +81,8 @@ recovery journals. `zbus` uses only its Tokio backend for systemd-resolved.
 `windows-service` supplies SCM registration/control. `system-configuration` and
 `core-foundation` supply macOS DNS. macOS-only `pfctl` 0.7.0 uses native ioctls,
 not the command-line program; its MIT/Apache source is vendored with two small
-public methods for first-anchor insertion and read-only existence checks.
+public methods for first-anchor insertion and read-only existence checks, plus
+standard IPv6 multicast listener type values for narrow link-maintenance rules.
 `x25519-dalek` supplies gotatun's key input type, and `zeroize` clears temporary
 PSK copies. `tempfile` and `socket2` are test-only helpers.
 
