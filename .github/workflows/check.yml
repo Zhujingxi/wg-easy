@@ -30,7 +30,7 @@ jobs:
         run: |
           echo "WGE_WORKSPACE_OWNER=$(stat -c '%u:%g' "$GITHUB_WORKSPACE")" >> "$GITHUB_ENV"
           apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y git curl ca-certificates build-essential cmake clang pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libegl1-mesa-dev libvulkan-dev libpipewire-0.3-dev libclang-dev libasound2-dev xvfb xauth mesa-vulkan-drivers fonts-noto-cjk
+          DEBIAN_FRONTEND=noninteractive apt-get install -y git curl ca-certificates build-essential cmake clang pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libegl1-mesa-dev libgbm-dev libvulkan-dev libpipewire-0.3-dev libclang-dev libasound2-dev xvfb xauth mesa-vulkan-drivers fonts-noto-cjk
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:

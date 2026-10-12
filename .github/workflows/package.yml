@@ -31,7 +31,7 @@ jobs:
         run: |
           echo "WGE_WORKSPACE_OWNER=$(stat -c '%u:%g' "$GITHUB_WORKSPACE")" >> "$GITHUB_ENV"
           apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y git curl jq ca-certificates python3 python-is-python3 build-essential cmake clang pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libegl1-mesa-dev libvulkan-dev libpipewire-0.3-dev libclang-dev libasound2-dev
+          DEBIAN_FRONTEND=noninteractive apt-get install -y git curl jq ca-certificates python3 python-is-python3 build-essential cmake clang pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libegl1-mesa-dev libgbm-dev libvulkan-dev libpipewire-0.3-dev libclang-dev libasound2-dev
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
