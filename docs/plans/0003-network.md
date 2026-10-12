@@ -100,6 +100,10 @@ operations run in isolated user/network namespaces guarded against host use:
   flow again after cleanup; foreign nftables tables survive ownership collisions.
 - Journal tests check version rejection, secret exclusion, private permissions
   and symlink rejection. DNS tests restore originals and preserve external edits.
+- The real systemd-resolved integration harness verifies split domains, IPv6
+  full-tunnel DNS, suppression of physical resolvers, normal restoration, crash
+  recovery and preservation of later DNS changes in private namespaces. See
+  `0008-resolved-verification.md` for the exact evidence and scope.
 - Native macOS arm64 and Windows GNU platform all-target checks and clippy pass;
   tests also assert that network state and errors remain Send + Sync.
 - The namespace harness measures payload throughput, idle CPU and RSS and can

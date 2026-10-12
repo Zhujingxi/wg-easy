@@ -174,13 +174,13 @@ mod tests {
 }
 
 #[cfg(test)]
-mod namespace_tests {
+pub(crate) mod namespace_tests {
     use super::*;
     use crate::{Journal, Network, dns, plan_routes, tests::configuration};
     use std::{fs, os::unix::fs::PermissionsExt, time::Duration};
     use tun::AbstractDevice;
 
-    fn prepare_namespace() {
+    pub(crate) fn prepare_namespace() {
         let host = std::env::var_os("WGE_HOST_NETNS")
             .map(std::path::PathBuf::from)
             .or_else(|| fs::read_link("/proc/1/ns/net").ok())
@@ -197,7 +197,7 @@ mod namespace_tests {
         request(RouteNetlinkMessage::NewLink(link), NLM_F_ACK).unwrap();
     }
 
-    fn device(name: &str, addresses: &[&str]) -> tun::AsyncDevice {
+    pub(crate) fn device(name: &str, addresses: &[&str]) -> tun::AsyncDevice {
         let mut config = tun::Configuration::default();
         config.tun_name(name).mtu(1420).up();
         let device = tun::create_as_async(&config).unwrap();

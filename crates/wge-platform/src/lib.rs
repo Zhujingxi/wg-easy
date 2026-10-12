@@ -26,6 +26,8 @@ mod dns;
 mod linux_filter;
 #[cfg(target_os = "linux")]
 mod linux_policy;
+#[cfg(all(test, target_os = "linux"))]
+mod linux_resolved_test;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
