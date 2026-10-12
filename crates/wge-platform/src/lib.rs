@@ -23,6 +23,8 @@ mod dns;
 #[path = "macos_dns.rs"]
 mod dns;
 #[cfg(target_os = "linux")]
+mod linux_filter;
+#[cfg(target_os = "linux")]
 mod linux_policy;
 #[cfg(target_os = "macos")]
 mod macos;
@@ -248,6 +250,12 @@ impl Network {
         };
         network.save()?;
         let result = async {
+            #[cfg(target_os = "linux")]
+            if config.is_all_traffic() {
+                network.journal.full_tunnel_policy = true;
+                network.save()?;
+                linux_filter::install(&network.journal.interface_name)?;
+            }
             #[cfg(target_os = "macos")]
             if let Some(filter) = &network.journal.filter {
                 macos_filter::apply(filter)?;
@@ -268,8 +276,6 @@ impl Network {
             }
             #[cfg(target_os = "linux")]
             if config.is_all_traffic() {
-                network.journal.full_tunnel_policy = true;
-                network.save()?;
                 linux_policy::install()?;
             }
             tokio::time::timeout(
@@ -342,6 +348,10 @@ impl Network {
         #[cfg(target_os = "macos")]
         if let Some(filter) = &self.journal.filter {
             macos_filter::restore(filter)?;
+        }
+        #[cfg(target_os = "linux")]
+        if self.journal.full_tunnel_policy {
+            linux_filter::remove(&self.journal.interface_name)?;
         }
         #[cfg(windows)]
         self.filter.take();

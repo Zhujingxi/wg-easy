@@ -24,6 +24,12 @@ table with native policy rules: marked WireGuard sockets use the physical main
 table, an unreachable guard prevents endpoint loops, and locally generated
 unmarked packets use the tunnel. This also captures more-specific LAN/DNS
 routes and respects strict reverse-path filtering on incoming encrypted UDP.
+An atomic native nftables inet filter checks final egress after routing/NAT:
+Linux can send directly on a socket-bound interface even when policy lookup
+returns unreachable. The filter permits the tunnel, loopback, marked WireGuard
+UDP and narrow DHCP/IPv6 link maintenance, and blocks other physical egress.
+Its table carries an ownership marker and is journaled before installation;
+normal stop and crash recovery remove it without touching other tables.
 
 Windows and macOS override existing physical ranges and contain later network
 changes with native filters, installed only while a full tunnel is active.
@@ -66,7 +72,8 @@ at login/reboot are introduced.
 
 `route_manager` wraps native route APIs; `netconfig` wraps interface APIs; `libc`
 supplies missing native calls. Linux's netlink crates are already route_manager
-transitives and provide policy routing. `serde` and `serde_json` encode public
+transitives and provide policy routing and nftables without additional
+dependencies or command-line tools. `serde` and `serde_json` encode public
 recovery journals. `zbus` uses only its Tokio backend for systemd-resolved.
 `windows-sys` supplies DNS, pipe identity, WFP and atomic file APIs;
 `windows-service` supplies SCM registration/control. `system-configuration` and
@@ -85,7 +92,9 @@ operations run in isolated user/network namespaces guarded against host use:
   preshared key, report handshakes and byte counters, and remove the interface
   and journal at disconnect.
 - Full-tunnel policy captures IPv4/IPv6 LAN DNS traffic despite physical routes,
-  bypasses the endpoint only for marked transport, and replays crash recovery.
+  bypasses the endpoint only for marked transport, blocks sockets explicitly
+  bound to the physical interface, and replays crash recovery. Physical packets
+  flow again after cleanup; foreign nftables tables survive ownership collisions.
 - Journal tests check version rejection, secret exclusion, private permissions
   and symlink rejection. DNS tests restore originals and preserve external edits.
 - Native macOS arm64 and Windows GNU platform all-target checks and clippy pass;

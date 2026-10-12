@@ -250,6 +250,8 @@ mod namespace_tests {
             },
         };
         network.save().unwrap();
+        crate::linux_filter::install("wge-policy").unwrap();
+        assert!(crate::linux_filter::installed("wge-policy").unwrap());
         let mut manager = route_manager::RouteManager::new().unwrap();
         for route in &network.journal.routes {
             manager.add(&route.native()).unwrap();
@@ -265,6 +267,17 @@ mod namespace_tests {
                 .await
                 .unwrap();
             read_payload(&tunnel, b"tunnel-only-dns").await;
+            let bound = tokio::net::UdpSocket::bind(source).await.unwrap();
+            socket2::SockRef::from(&bound)
+                .bind_device(Some(b"wge-uplink"))
+                .unwrap();
+            assert!(
+                bound
+                    .send_to(b"bound-uplink-must-not-leak", destination)
+                    .await
+                    .is_err(),
+                "A physical-interface-bound socket must not fall back to the main table: {source}"
+            );
             socket2::SockRef::from(&socket)
                 .set_mark(SOCKET_MARK)
                 .unwrap();
@@ -278,9 +291,40 @@ mod namespace_tests {
         // A process crash drops in-memory state while the persisted cleanup intent survives.
         drop(network);
         crate::recover(temporary.path()).await.unwrap();
+        assert!(!crate::linux_filter::installed("wge-policy").unwrap());
         assert_eq!(fs::read_dir(temporary.path()).unwrap().count(), 0);
         assert!(manager.list().unwrap().iter().all(|r| r.table() != TABLE));
         check_available().unwrap();
+        for (source, destination) in [
+            ("192.0.2.1:0", "192.0.2.53:53"),
+            ("[fd00:1::1]:0", "[fd00:1::53]:53"),
+        ] {
+            let socket = tokio::net::UdpSocket::bind(source).await.unwrap();
+            socket2::SockRef::from(&socket)
+                .bind_device(Some(b"wge-uplink"))
+                .unwrap();
+            socket
+                .send_to(b"restored-physical-route", destination)
+                .await
+                .unwrap();
+            read_payload(&uplink, b"restored-physical-route").await;
+        }
+        crate::linux_filter::assert_ownership_collision();
+        let normal = Network {
+            path: temporary.path().join("wge-policy.json"),
+            journal: Journal {
+                version: 1,
+                interface_name: "wge-policy".into(),
+                routes: vec![],
+                displaced_routes: vec![],
+                dns: dns::State::None,
+                full_tunnel_policy: true,
+            },
+        };
+        normal.save().unwrap();
+        crate::linux_filter::install("wge-policy").unwrap();
+        normal.stop().await.unwrap();
+        assert!(!crate::linux_filter::installed("wge-policy").unwrap());
         drop(tunnel);
         drop(uplink);
     }
