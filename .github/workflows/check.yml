@@ -22,24 +22,26 @@ jobs:
       matrix:
         os: ${{ fromJSON(inputs.hosted_platforms && '["linux", "windows", "macos"]' || '["linux"]') }}
     runs-on: ${{ fromJSON(matrix.os == 'linux' && '["self-hosted", "linux", "x64", "wg-easy-ci"]' || matrix.os == 'windows' && '["windows-latest"]' || '["macos-latest"]') }}
+    container: ${{ matrix.os == 'linux' && 'ubuntu:24.04' || '' }}
     timeout-minutes: 60
     steps:
+      - name: Prepare isolated Linux build environment
+        if: runner.os == 'Linux'
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y git curl ca-certificates build-essential cmake clang pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libegl1-mesa-dev libvulkan-dev libpipewire-0.3-dev libclang-dev libasound2-dev xvfb xauth mesa-vulkan-drivers fonts-noto-cjk
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Install Linux desktop build libraries
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake clang pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libegl1-mesa-dev libvulkan-dev libpipewire-0.3-dev libclang-dev libasound2-dev xvfb mesa-vulkan-drivers fonts-noto-cjk
       - run: cargo fmt --all -- --check
       - run: cargo check --workspace --locked
       - run: cargo test --workspace --locked
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo build --workspace --locked
       - name: Native desktop acceptance with software Vulkan
+        shell: bash
         if: runner.os == 'Linux'
         run: |
           mkdir -p measurements/gui

@@ -6,10 +6,6 @@ on:
         description: Also build and test Windows/macOS on GitHub-hosted runners
         type: boolean
         default: false
-      install_smoke:
-        description: Install, restart and remove the Debian package on the runner guest
-        type: boolean
-        default: false
   pull_request:
     paths: ['packaging/**', '.github/workflows/package.yml', 'about.toml', 'Cargo.lock']
   push:
@@ -27,8 +23,14 @@ jobs:
       matrix:
         os: ${{ fromJSON(inputs.hosted_platforms && '["linux", "windows", "macos"]' || '["linux"]') }}
     runs-on: ${{ fromJSON(matrix.os == 'linux' && '["self-hosted", "linux", "x64", "wg-easy-ci"]' || matrix.os == 'windows' && '["windows-latest"]' || '["macos-latest"]') }}
+    container: ${{ matrix.os == 'linux' && 'ubuntu:24.04' || '' }}
     timeout-minutes: 60
     steps:
+      - name: Prepare isolated Linux build environment
+        if: runner.os == 'Linux'
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y git curl ca-certificates python3 python-is-python3 build-essential cmake clang pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libegl1-mesa-dev libvulkan-dev libpipewire-0.3-dev libclang-dev libasound2-dev
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -40,11 +42,6 @@ jobs:
         run: |
           cargo about generate packaging/licenses.hbs --locked --fail --output-file THIRD-PARTY-LICENSES.html
           printf 'Corresponding source (including modified MPL-2.0 gotatun):\nhttps://github.com/Zhujingxi/wg-easy/tree/%s\n' "$GITHUB_SHA" > SOURCE.txt
-      - name: Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake clang pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libegl1-mesa-dev libvulkan-dev libpipewire-0.3-dev libclang-dev libasound2-dev
       - name: Build release
         if: runner.os != 'macOS'
         run: cargo build --workspace --release --locked
@@ -109,18 +106,6 @@ jobs:
           files=[p for p in pathlib.Path('dist').iterdir() if p.suffix in ('.deb','.msi','.pkg')]
           pathlib.Path('dist/SHA256SUMS').write_text(''.join(f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n' for p in files))
           pathlib.Path('dist/package-measurements.json').write_text(json.dumps({p.name:{'bytes':p.stat().st_size} for p in files},indent=2))
-      - name: Install Linux service and verify lifecycle
-        if: runner.os == 'Linux' && inputs.install_smoke
-        env:
-          WGE_INSTALLED_SERVICE_TEST: '1'
-          WGE_SERVICE_SMOKE_STATE: ${{ runner.temp }}/wge-service-smoke.json
-        run: |
-          sudo apt-get install -y ./dist/*.deb
-          trap 'sudo systemctl restart wireguardeasy; if test -f "$WGE_SERVICE_SMOKE_STATE"; then cargo test -p wge-daemon --test installed_service installed_service_restart_is_off --locked -- --ignored --exact --nocapture; fi; sudo dpkg --remove wireguardeasy-desktop' EXIT
-          systemctl is-active --quiet wireguardeasy
-          cargo test -p wge-daemon --test installed_service installed_service_connect_and_leave_running --locked -- --ignored --exact --nocapture
-          sudo dpkg --install dist/*.deb
-          cargo test -p wge-daemon --test installed_service installed_service_restart_is_off --locked -- --ignored --exact --nocapture
       - name: Native Windows full-tunnel DNS, filtering and recovery
         if: runner.os == 'Windows'
         shell: pwsh
