@@ -4,6 +4,7 @@ set -eu
 resolved_binary=${WGE_RESOLVED_BINARY:-/lib/systemd/systemd-resolved}
 if [ "${WGE_RESOLVED_ISOLATED:-}" != 1 ]; then
     test "$(id -u)" != 0 || { echo 'Run as an ordinary user, not root.' >&2; exit 1; }
+    test -c /dev/net/tun || { echo 'Expose /dev/net/tun in this environment to run isolated resolver tests.' >&2; exit 1; }
     test -x "$resolved_binary" || { echo 'systemd-resolved is required for this test.' >&2; exit 1; }
     command -v dbus-daemon >/dev/null
     "$resolved_binary" --version | head -n 1
