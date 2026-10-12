@@ -5,6 +5,8 @@
 mod appearance;
 #[path = "../src/backend.rs"]
 mod backend;
+#[path = "../src/focus_scroll.rs"]
+mod focus_scroll;
 #[path = "../src/form.rs"]
 mod form;
 #[path = "../src/import.rs"]
@@ -216,6 +218,29 @@ fn main() {
                     key("tab", window, cx);
                     key("enter", window, cx);
                     assert_eq!(view.read(cx).editor_modes(), (false, true));
+                }).unwrap();
+                cx.background_executor().timer(Duration::from_millis(200)).await;
+                window.update(cx, |_, window, cx| key("tab", window, cx)).unwrap();
+                cx.background_executor().timer(Duration::from_millis(200)).await;
+                window.update(cx, |_, window, cx| view.read(cx).assert_visible_field("0.psk", window, cx)).unwrap();
+                for _ in 0..4 {
+                    window.update(cx, |_, window, cx| key("tab", window, cx)).unwrap();
+                    cx.background_executor().timer(Duration::from_millis(100)).await;
+                }
+                window.update(cx, |_, window, cx| view.read(cx).assert_visible_field("domains", window, cx)).unwrap();
+                window.update(cx, |_, window, cx| view.read(cx).reset_editor_scroll(window)).unwrap();
+                cx.background_executor().timer(Duration::from_millis(200)).await;
+                cx.update(|cx| view.read(cx).assert_editor_at_top());
+                for _ in 0..3 {
+                    window.update(cx, |_, window, cx| key("tab", window, cx)).unwrap();
+                    cx.background_executor().timer(Duration::from_millis(100)).await;
+                }
+                window.update(cx, |_, window, cx| {
+                    view.read(cx).assert_preview_scrolled();
+                    let previous = cx.read_from_clipboard();
+                    key("enter", window, cx);
+                    assert!(cx.read_from_clipboard().and_then(|item| item.text()).is_some_and(|text| text.starts_with("[Peer]")));
+                    cx.write_to_clipboard(previous.unwrap_or_else(|| ClipboardItem::new_string(String::new())));
                 }).unwrap();
                 window
                     .update(cx, |_, window, cx| {

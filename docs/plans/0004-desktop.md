@@ -210,3 +210,14 @@ DNS opens Advanced. The existing Kit focus traversal and activation work without
 custom app keybindings. Network containment/recovery, installation and native
 Windows/macOS behavior are verified by their owning workstreams, not simulated
 by GUI screenshots.
+
+The pinned toolkit does not scroll a newly focused control into view: a native
+reproduction tabbed to an input at y=970 in a 400-pixel viewport. A shared small
+wrapper now reveals fields, buttons and tunnel rows on focus entry in the three
+scroll regions. It uses GPUI's existing focus/layout/scroll APIs, adds no dependency,
+and leaves manual scrolling alone while focus stays on the same control. Native
+acceptance tabs through Advanced to the PSK and DNS-domain fields and checks their
+actual bounds, then tabs to the preview copy button and activates it with Enter.
+A separate native reproduction verifies a visible control does not change the
+scroll offset; the acceptance suite verifies manual scrolling is preserved.
+Linux and Windows GNU strict all-target Clippy pass after the integration.

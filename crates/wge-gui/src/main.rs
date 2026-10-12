@@ -7,6 +7,7 @@
 
 mod appearance;
 mod backend;
+mod focus_scroll;
 mod form;
 mod import;
 mod settings;

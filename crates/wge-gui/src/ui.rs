@@ -1,5 +1,6 @@
 use crate::{
     backend::{Backend, Command, Event, Intent},
+    focus_scroll::{FocusScroll, reveal},
     form,
     settings::Settings,
 };
@@ -169,6 +170,9 @@ pub struct MainView {
     offline: bool,
     busy: bool,
     focus: FocusHandle,
+    content_scroll: ScrollHandle,
+    editor_scroll: ScrollHandle,
+    preview_scroll: ScrollHandle,
 }
 impl MainView {
     pub fn new(
@@ -210,6 +214,9 @@ impl MainView {
             offline,
             busy: false,
             focus: cx.focus_handle(),
+            content_scroll: ScrollHandle::new(),
+            editor_scroll: ScrollHandle::new(),
+            preview_scroll: ScrollHandle::new(),
         }
     }
     fn input(
@@ -237,6 +244,9 @@ impl MainView {
     fn edit(&mut self, tunnel: Tunnel, window: &mut Window, cx: &mut Context<Self>) {
         self.clear_secrets(window, cx);
         self.clear_editor();
+        self.content_scroll.set_offset(Point::default());
+        self.editor_scroll.set_offset(Point::default());
+        self.preview_scroll.set_offset(Point::default());
         let generation = EDITOR_GENERATION.fetch_add(1, Ordering::Relaxed);
         let peers = tunnel.config.peers.len().max(1);
         let all_traffic = form::all_traffic_switch(&tunnel.config);
@@ -706,7 +716,7 @@ impl MainView {
                     ),
             )
     }
-    fn import_actions(&self, cx: &mut Context<Self>) -> Div {
+    fn import_actions(&self, cx: &mut Context<Self>) -> FocusScroll {
         div()
             .flex()
             .items_center()
@@ -742,6 +752,7 @@ impl MainView {
                     .disabled(self.busy)
                     .on_click(cx.listener(|this, _, window, cx| this.open_import(window, cx))),
             )
+            .map(|actions| reveal("focus-import-actions", actions, &self.content_scroll))
     }
     fn tunnel_list(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let tunnels: Vec<_> = self.snapshot.tunnels.iter().filter(|t| t.saved).collect();
@@ -768,7 +779,8 @@ impl MainView {
                     )
                     .child(heading(tr("empty_title")))
                     .child(small(tr("empty_hint")))
-                    .child(
+                    .child(reveal(
+                        "focus-first-tunnel",
                         Button::new("first-tunnel")
                             .primary()
                             .mt_3()
@@ -778,7 +790,8 @@ impl MainView {
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.send(Request::BeginDraft, Intent::Edit, cx)
                             })),
-                    )
+                        &self.content_scroll,
+                    ))
                     .child(small(tr("drop_hint"))),
             );
         } else {
@@ -787,7 +800,8 @@ impl MainView {
                 let id = tunnel.id.clone();
                 let toggle_id = id.clone();
                 let selected = self.selected.as_ref() == Some(&id);
-                rows = rows.child(
+                rows = rows.child(reveal(
+                    SharedString::from(format!("focus-row-{}", id.0)),
                     div()
                         .id(SharedString::from(format!("row-{}", id.0)))
                         .p_5()
@@ -850,7 +864,8 @@ impl MainView {
                                     );
                                 })),
                         ),
-                );
+                    &self.content_scroll,
+                ));
             }
             list = list.child(rows);
             if let Some(tunnel) = self
@@ -886,7 +901,8 @@ impl MainView {
                                 rust_i18n::t!("tunnel_count", count = count).into_owned(),
                             )),
                     )
-                    .child(
+                    .child(reveal(
+                        "focus-new-tunnel",
                         Button::new("new-tunnel")
                             .primary()
                             .icon(IconName::Plus)
@@ -895,7 +911,8 @@ impl MainView {
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.send(Request::BeginDraft, Intent::Edit, cx)
                             })),
-                    ),
+                        &self.content_scroll,
+                    )),
             )
             .child(self.import_actions(cx))
             .child(list)
@@ -935,7 +952,8 @@ impl MainView {
                     .justify_between()
                     .items_center()
                     .child(heading(tunnel.name.clone()))
-                    .child(
+                    .child(reveal(
+                        "focus-edit-tunnel",
                         Button::new("edit-tunnel")
                             .ghost()
                             .label(tr(if tunnel.status.state != ConnectionState::Off {
@@ -948,7 +966,8 @@ impl MainView {
                             .on_click(
                                 cx.listener(move |this, _, _, cx| this.start_edit(id.clone(), cx)),
                             ),
-                    ),
+                        &self.content_scroll,
+                    )),
             )
             .child(
                 div()
@@ -992,7 +1011,8 @@ impl MainView {
                     .border_t_1()
                     .border_color(rgb(LINE))
                     .pt_4()
-                    .child(
+                    .child(reveal(
+                        "focus-export-tunnel",
                         Button::new("export-tunnel")
                             .disabled(self.busy || self.offline)
                             .ghost()
@@ -1003,8 +1023,10 @@ impl MainView {
                                     Some(Confirm::Export(export_id.clone(), export_name.clone()));
                                 cx.notify();
                             })),
-                    )
-                    .child(
+                        &self.content_scroll,
+                    ))
+                    .child(reveal(
+                        "focus-delete-tunnel",
                         Button::new("delete-tunnel")
                             .disabled(self.busy || self.offline)
                             .ghost()
@@ -1015,7 +1037,8 @@ impl MainView {
                                     Some(Confirm::Delete(delete_id.clone(), delete_name.clone()));
                                 cx.notify();
                             })),
-                    ),
+                        &self.content_scroll,
+                    )),
             )
             .into_any_element()
     }
@@ -1026,7 +1049,7 @@ impl MainView {
         hint: &str,
         errors: &form::Errors,
         cx: &Context<Self>,
-    ) -> Div {
+    ) -> FocusScroll {
         let editor = self.editor.as_ref().unwrap();
         let input = &editor.fields[id];
         let show_error = editor.submitted
@@ -1062,6 +1085,15 @@ impl MainView {
                     .text_color(rgb(if error.is_some() { 0xa4483d } else { MUTED }))
                     .child(tr(error.copied().unwrap_or(hint))),
             )
+            .map(|field| {
+                reveal(
+                    SharedString::from(format!("field-{id}")),
+                    field,
+                    &self.editor_scroll,
+                )
+                .flex_1()
+                .min_w_0()
+            })
     }
     fn editor_form(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let editor = self.editor.as_ref().unwrap();
@@ -1115,7 +1147,8 @@ impl MainView {
                                         .items_center()
                                         .justify_between()
                                         .child(small(tr("your_public_key")))
-                                        .child(
+                                        .child(reveal(
+                                            "focus-copy-public",
                                             Button::new("copy-public")
                                                 .ghost()
                                                 .small()
@@ -1126,7 +1159,8 @@ impl MainView {
                                                         ClipboardItem::new_string(copy_key.clone()),
                                                     )
                                                 }),
-                                        ),
+                                            &self.editor_scroll,
+                                        )),
                                 )
                                 .child(div().text_xs().font_family("monospace").child(public_key))
                                 .child(
@@ -1189,7 +1223,8 @@ impl MainView {
                                                 .child(tr("hint_all_traffic")),
                                         ),
                                 )
-                                .child(
+                                .child(reveal(
+                                    "focus-all-traffic",
                                     Switch::new("all-traffic")
                                         .disabled(self.busy)
                                         .checked(editor.all_traffic)
@@ -1200,7 +1235,8 @@ impl MainView {
                                             }
                                             cx.notify();
                                         })),
-                                ),
+                                    &self.editor_scroll,
+                                )),
                         )
                         .child(
                             div()
@@ -1220,7 +1256,8 @@ impl MainView {
                 ),
             );
         let advanced = editor.advanced;
-        fields = fields.child(
+        fields = fields.child(reveal(
+            "focus-advanced",
             Button::new("advanced")
                 .ghost()
                 .icon(if advanced {
@@ -1236,7 +1273,8 @@ impl MainView {
                     }
                     cx.notify();
                 })),
-        );
+            &self.editor_scroll,
+        ));
         if advanced {
             let revealed = editor.revealed.is_some();
             let reveal_id = id.clone();
@@ -1299,7 +1337,8 @@ impl MainView {
                                                 }),
                                         ),
                                 )
-                                .child(
+                                .child(reveal(
+                                    "focus-show-private",
                                     Button::new("show-private")
                                         .ghost()
                                         .small()
@@ -1320,7 +1359,8 @@ impl MainView {
                                                 cx,
                                             );
                                         })),
-                                ),
+                                    &self.editor_scroll,
+                                )),
                         )
                         .child(small(tr("hint_private_key"))),
                 );
@@ -1372,7 +1412,8 @@ impl MainView {
                         &errors,
                         cx,
                     ))
-                    .child(
+                    .child(reveal(
+                        SharedString::from(format!("focus-remove-peer-{index}")),
                         Button::new(SharedString::from(format!("remove-peer-{index}")))
                             .ghost()
                             .small()
@@ -1381,18 +1422,21 @@ impl MainView {
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.remove_peer(index, window, cx)
                             })),
-                    );
+                        &self.editor_scroll,
+                    ));
                 advanced = advanced.child(peer);
             }
             fields = fields.child(
-                advanced.child(
+                advanced.child(reveal(
+                    "focus-add-peer",
                     Button::new("add-peer")
                         .outline()
                         .icon(IconName::Plus)
                         .label(tr("add_peer"))
                         .disabled(self.busy)
                         .on_click(cx.listener(|this, _, window, cx| this.add_peer(window, cx))),
-                ),
+                    &self.editor_scroll,
+                )),
             );
         }
         let preview = self.preview(&values, cx);
@@ -1448,7 +1492,9 @@ impl MainView {
                             .min_w_0()
                             .h_full()
                             .child(fields)
-                            .overflow_y_scrollbar(),
+                            .overflow_y_scroll()
+                            .track_scroll(&self.editor_scroll)
+                            .vertical_scrollbar(&self.editor_scroll),
                     )
                     .child(
                         div()
@@ -1457,7 +1503,9 @@ impl MainView {
                             .flex_shrink_0()
                             .h_full()
                             .child(preview)
-                            .overflow_y_scrollbar(),
+                            .overflow_y_scroll()
+                            .track_scroll(&self.preview_scroll)
+                            .vertical_scrollbar(&self.preview_scroll),
                     ),
             )
             .child(
@@ -1639,7 +1687,8 @@ impl MainView {
                             .font_weight(FontWeight::MEDIUM)
                             .child(tr("server_snippet")),
                     )
-                    .child(
+                    .child(reveal(
+                        "focus-copy-snippet",
                         Button::new("copy-snippet")
                             .ghost()
                             .small()
@@ -1650,7 +1699,8 @@ impl MainView {
                                     copy_snippet.clone(),
                                 ))
                             }),
-                    ),
+                        &self.preview_scroll,
+                    )),
             )
             .child(small(tr("snippet_hint")))
             .child(
@@ -1678,7 +1728,8 @@ impl MainView {
         let mut languages = div().flex().gap_3();
         for locale in rust_i18n::available_locales!() {
             let selected = *locale == *rust_i18n::locale();
-            languages = languages.child(
+            languages = languages.child(reveal(
+                SharedString::from(format!("focus-language-{locale}")),
                 Button::new(SharedString::from(format!("language-{locale}")))
                     .when(selected, |b| b.primary())
                     .label(rust_i18n::t!("language_name", locale = locale).into_owned())
@@ -1691,7 +1742,8 @@ impl MainView {
                         }
                         cx.notify();
                     })),
-            );
+                &self.content_scroll,
+            ));
         }
         div()
             .flex()
@@ -1726,7 +1778,8 @@ impl MainView {
                             .child(heading(tr("start_at_login")))
                             .child(small(tr("login_hint"))),
                     )
-                    .child(
+                    .child(reveal(
+                        "focus-start-at-login",
                         Switch::new("start-at-login")
                             .checked(self.settings.start_at_login)
                             .accessibility_label(tr("start_at_login"))
@@ -1736,7 +1789,8 @@ impl MainView {
                                 }
                                 cx.notify();
                             })),
-                    ),
+                        &self.content_scroll,
+                    )),
             )
             .child(
                 panel()
@@ -1746,12 +1800,14 @@ impl MainView {
                     .child(heading(tr("about")))
                     .child(small(tr("about_hint")))
                     .child(small(tr("no_accounts")))
-                    .child(
+                    .child(reveal(
+                        "focus-quit",
                         Button::new("quit")
                             .outline()
                             .label(tr("quit_app"))
                             .on_click(|_, _, cx| cx.quit()),
-                    ),
+                        &self.content_scroll,
+                    )),
             )
             .into_any_element()
     }
@@ -1814,6 +1870,9 @@ impl MainView {
                                 })),
                         ),
                 )
+                .map(|confirmation| {
+                    reveal("focus-confirmation", confirmation, &self.content_scroll)
+                })
                 .into_any_element(),
         )
     }
@@ -1875,6 +1934,7 @@ impl Render for MainView {
                     .h_full()
                     .when(editing, |d| d.overflow_hidden())
                     .when(!editing, |d| d.overflow_y_scroll())
+                    .track_scroll(&self.content_scroll)
                     .p_6()
                     .child(
                         div()
@@ -1955,6 +2015,30 @@ impl MainView {
     pub fn editor_modes(&self) -> (bool, bool) {
         let editor = self.editor.as_ref().unwrap();
         (editor.all_traffic, editor.advanced)
+    }
+    #[allow(dead_code)]
+    pub fn assert_visible_field(&self, field: &str, window: &Window, cx: &App) {
+        let input = self.editor.as_ref().unwrap().fields[field].read(cx);
+        assert!(input.focus_handle(cx).is_focused(window));
+        let bounds = input.input_bounds();
+        let viewport = self.editor_scroll.bounds();
+        assert!(
+            bounds.top() >= viewport.top() && bounds.bottom() <= viewport.bottom(),
+            "{field}: {bounds:?} outside {viewport:?}"
+        );
+    }
+    #[allow(dead_code)]
+    pub fn assert_preview_scrolled(&self) {
+        assert!(self.preview_scroll.offset().y < px(0.));
+    }
+    #[allow(dead_code)]
+    pub fn reset_editor_scroll(&self, window: &mut Window) {
+        self.editor_scroll.set_offset(Point::default());
+        window.refresh();
+    }
+    #[allow(dead_code)]
+    pub fn assert_editor_at_top(&self) {
+        assert_eq!(self.editor_scroll.offset(), Point::default());
     }
     #[allow(dead_code)]
     pub fn check_service_actions(
