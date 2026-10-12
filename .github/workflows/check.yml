@@ -82,7 +82,7 @@ jobs:
           mkdir -p measurements
           export WGE_HOST_NETNS="$(readlink /proc/self/ns/net)"
           export WGE_METRICS_PATH="$PWD/measurements/tunnel-linux.json"
-          sudo --preserve-env=WGE_HOST_NETNS,WGE_METRICS_PATH env PATH="$PATH" CARGO_HOME="$HOME/.cargo" RUSTUP_HOME="$HOME/.rustup" unshare --net cargo test -p wge-engine -p wge-platform --release --locked -- --ignored --nocapture --test-threads=1
+          unshare --user --map-root-user --net cargo test -p wge-engine -p wge-platform --release --locked -- --ignored --nocapture --test-threads=1
       - uses: actions/upload-artifact@v4
         with:
           name: tunnel-measurements-${{ github.sha }}
