@@ -9,6 +9,7 @@ use gotatun::{
 use std::{
     io,
     net::SocketAddr,
+    os::unix::fs::PermissionsExt,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -113,6 +114,7 @@ async fn next_packet(receiver: &mut mpsc::Receiver<Packet<Ip>>) -> Packet<Ip> {
 async fn namespace_handshake_ipv4_ipv6_cleanup_and_metrics() {
     namespace_only();
     let recovery = tempfile::tempdir().unwrap();
+    std::fs::set_permissions(recovery.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     let client_key = SecretKey::from_bytes([1; 32]).unwrap();
     let server_key = SecretKey::from_bytes([2; 32]).unwrap();
     let psk = [3; 32];

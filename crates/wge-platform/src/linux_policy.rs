@@ -177,7 +177,7 @@ mod tests {
 mod namespace_tests {
     use super::*;
     use crate::{Journal, Network, dns, plan_routes, tests::configuration};
-    use std::{fs, time::Duration};
+    use std::{fs, os::unix::fs::PermissionsExt, time::Duration};
     use tun::AbstractDevice;
 
     fn prepare_namespace() {
@@ -230,6 +230,7 @@ mod namespace_tests {
         let tunnel = device("wge-policy", &["10.0.0.1/24", "fd42:1::1/64"]);
         check_available().unwrap();
         let temporary = tempfile::tempdir().unwrap();
+        fs::set_permissions(temporary.path(), fs::Permissions::from_mode(0o700)).unwrap();
         let routes = plan_routes(
             &configuration(),
             &[],
