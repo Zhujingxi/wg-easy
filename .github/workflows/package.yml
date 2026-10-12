@@ -29,6 +29,7 @@ jobs:
       - name: Prepare isolated Linux build environment
         if: runner.os == 'Linux'
         run: |
+          echo "WGE_WORKSPACE_OWNER=$(stat -c '%u:%g' "$GITHUB_WORKSPACE")" >> "$GITHUB_ENV"
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y git curl ca-certificates python3 python-is-python3 build-essential cmake clang pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libegl1-mesa-dev libvulkan-dev libpipewire-0.3-dev libclang-dev libasound2-dev
       - uses: actions/checkout@v4
@@ -168,3 +169,6 @@ jobs:
           name: installer-${{ runner.os }}-${{ github.sha }}
           path: dist/
           if-no-files-found: error
+      - name: Restore workspace ownership
+        if: runner.os == 'Linux' && always() && env.WGE_WORKSPACE_OWNER != ''
+        run: chown -hR "$WGE_WORKSPACE_OWNER" "$GITHUB_WORKSPACE"
