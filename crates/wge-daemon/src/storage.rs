@@ -1,5 +1,5 @@
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
 };
@@ -71,7 +71,10 @@ impl Store {
             file.write_all(content.as_bytes())?;
             file.sync_all()?;
             drop(file);
+            #[cfg(unix)]
             fs::rename(&temporary, &path)?;
+            #[cfg(windows)]
+            wge_platform::windows::replace_file(&temporary, &path)?;
             sync_parent(&path)
         })();
         if result.is_err() {
@@ -118,22 +121,29 @@ impl Store {
                     use std::os::unix::fs::OpenOptionsExt;
                     options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
                 }
-                let file = options.open(&path)?;
-                if file.metadata()?.len() > MAX_STORED_BYTES {
+                let mut file = options.open(&path)?;
+                let metadata = file.metadata()?;
+                if !metadata.is_file() || metadata.len() > MAX_STORED_BYTES {
                     return Err(invalid("Stored tunnel exceeds the size limit"));
                 }
-                let mut text = Zeroizing::new(String::new());
-                file.take(MAX_STORED_BYTES + 1).read_to_string(&mut text)?;
-                if text.len() as u64 > MAX_STORED_BYTES {
-                    return Err(invalid("Stored tunnel exceeds the size limit"));
+                // A fixed buffer never leaves secret data in a reallocated old buffer.
+                let mut bytes = Zeroizing::new(vec![0; metadata.len() as usize]);
+                file.read_exact(&mut bytes)?;
+                let mut extra = Zeroizing::new([0; 1]);
+                if file.read(&mut *extra)? != 0 {
+                    return Err(invalid("Stored tunnel changed while it was being read"));
                 }
+                let text = std::str::from_utf8(&bytes)
+                    .map_err(|_| invalid("Stored tunnel is not valid UTF-8"))?;
                 let name = text
                     .lines()
                     .next()
                     .and_then(|line| line.strip_prefix(NAME_PREFIX))
                     .and_then(|name| serde_json::from_str::<String>(name).ok())
                     .ok_or_else(|| invalid("Stored tunnel name is invalid"))?;
-                let config = wge_config::parse(&text)
+                wge_config::validate_name(&name)
+                    .map_err(|_| invalid("Stored tunnel name is invalid"))?;
+                let config = wge_config::parse(text)
                     .map_err(|_| invalid("Stored tunnel configuration is invalid"))?;
                 tunnels.push(StoredTunnel {
                     owner: owner.clone(),
@@ -149,6 +159,12 @@ impl Store {
 fn invalid(message: &'static str) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::InvalidData, message)
 }
+#[cfg(windows)]
+pub fn private_directory(path: &Path) -> std::io::Result<()> {
+    wge_platform::windows_storage::private_directory(path)
+}
+
+#[cfg(unix)]
 pub fn private_directory(path: &Path) -> std::io::Result<()> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => {
@@ -180,8 +196,8 @@ pub fn private_directory(path: &Path) -> std::io::Result<()> {
     }
     Ok(())
 }
-fn sync_parent(path: &Path) -> std::io::Result<()> {
+fn sync_parent(_path: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
-    File::open(path.parent().ok_or_else(|| invalid("No storage parent"))?)?.sync_all()?;
+    fs::File::open(_path.parent().ok_or_else(|| invalid("No storage parent"))?)?.sync_all()?;
     Ok(())
 }

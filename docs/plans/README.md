@@ -27,6 +27,8 @@ root holds the scope and the rules; plans hold how a specific piece gets built.
 |---|---|
 | [0001: Configuration foundation](0001-config.md) | done |
 | [0002: Local service](0002-service.md) | done |
+| [0003: Native networking](0003-network.md) | done |
+| [0007: Service trust-boundary review](0007-service-review.md) | done |
 
 ## To verify before the first plans
 
