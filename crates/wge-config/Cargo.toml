@@ -8,5 +8,12 @@ license.workspace = true
 
 [dependencies]
 base64.workspace = true
-ipnetwork.workspace = true
+ipnetwork = { workspace = true, features = ["serde"] }
 thiserror.workspace = true
+serde = { version = "1", features = ["derive"] }
+zeroize = { version = "1", features = ["derive"] }
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+
+[dev-dependencies]
+proptest = "1"
+serde_json = "1"
