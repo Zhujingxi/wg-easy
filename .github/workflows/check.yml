@@ -68,6 +68,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Check build-tool prerequisites
+        run: |
+          command -v curl
+          command -v jq
+          command -v tar
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deny,cargo-audit
@@ -101,6 +106,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
+      - name: Check build-tool prerequisites
+        run: |
+          command -v curl
+          command -v jq
+          command -v tar
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-fuzz
