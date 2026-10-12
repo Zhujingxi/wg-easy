@@ -102,6 +102,19 @@ impl Render for QrScan {
     }
 }
 
+fn key(stroke: &str, window: &mut Window, cx: &mut App) {
+    let keystroke = Keystroke::parse(stroke).unwrap();
+    window.dispatch_event(
+        PlatformInput::KeyDown(KeyDownEvent {
+            keystroke: keystroke.clone(),
+            is_held: false,
+            prefer_character_input: false,
+        }),
+        cx,
+    );
+    window.dispatch_event(PlatformInput::KeyUp(KeyUpEvent { keystroke }), cx);
+}
+
 fn main() {
     let Some(directory) = std::env::var_os("WGE_PREVIEW_DIR").map(PathBuf::from) else {
         return;
@@ -193,9 +206,21 @@ fn main() {
                     .unwrap();
                 cx.background_executor().timer(Duration::from_secs(2)).await;
                 screenshot(&directory, "02-editor.png");
+                window.update(cx, |_, window, cx| {
+                        view.read(cx).field_focus("0.public_key", cx).focus(window, cx);
+                    key("tab", window, cx);
+                    key("space", window, cx);
+                    assert_eq!(view.read(cx).editor_modes(), (true, false));
+                    key("space", window, cx);
+                        view.read(cx).field_focus("dns", cx).focus(window, cx);
+                    key("tab", window, cx);
+                    key("enter", window, cx);
+                    assert_eq!(view.read(cx).editor_modes(), (false, true));
+                }).unwrap();
                 window
                     .update(cx, |_, window, cx| {
                         view.update(cx, |view, cx| {
+                            view.check_service_actions(&mut receiver, window, cx);
                             view.check_preshared_input(window, cx);
                             view.check_clipboard_imports(&mut receiver, CONFIG, cx);
                             view.check_stale_reveal(window, cx);
@@ -227,7 +252,7 @@ fn main() {
                 cx.background_executor().timer(Duration::from_secs(2)).await;
                 assert!(import::screen().is_ok_and(|text| text.expose() == CONFIG));
                 qr_window.update(cx, |_, window, _| window.remove_window()).unwrap();
-                println!("Native desktop checks passed: English/Japanese, clipboard text/image, screen QR, IME composition, and stale reveal rejection.");
+                println!("Native desktop checks passed: English/Japanese, keyboard navigation, edit/save/connect/delete handlers, peer removal, clipboard text/image, screen QR, IME composition, and stale reveal rejection.");
                 cx.update(|cx| cx.quit());
             })
             .detach();

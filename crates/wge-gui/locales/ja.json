@@ -26,6 +26,7 @@
   "ranges_count": "%{count} 個の範囲",
   "toggle_tunnel": "%{name} に接続",
   "edit": "編集",
+  "disconnect_edit": "切断して編集",
   "handshake": "最終ハンドシェイク",
   "received": "受信",
   "sent": "送信",

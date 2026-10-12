@@ -214,6 +214,15 @@ fn main() {
                                                     Intent::Action,
                                                 );
                                             }
+                                            Event::Reply(
+                                                Intent::DeleteAfterDisconnect,
+                                                Response::Tunnel(tunnel),
+                                            ) => {
+                                                desktop.backend.send(
+                                                    Request::Delete { id: tunnel.id },
+                                                    Intent::Action,
+                                                );
+                                            }
                                             _ => {}
                                         }
                                     }

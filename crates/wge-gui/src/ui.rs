@@ -13,7 +13,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::{prelude::*, *};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -120,11 +120,26 @@ struct Editor {
     all_traffic: bool,
     advanced: bool,
     submitted: bool,
+    touched: HashSet<EntityId>,
     revealed: Option<SensitiveText>,
     generation: u64,
     qr: Option<(String, Arc<Image>)>,
 }
 impl Editor {
+    fn psk_hint(&self, peer: usize, cx: &App) -> &'static str {
+        let public_key = self.fields[&form::key(peer, "public_key")].read(cx).value();
+        if self
+            .tunnel
+            .config
+            .peers
+            .iter()
+            .any(|peer| peer.has_preshared_key && peer.public_key.to_string() == public_key.trim())
+        {
+            "hint_psk_set"
+        } else {
+            "hint_psk"
+        }
+    }
     fn values(&self, cx: &App) -> form::Values {
         self.fields
             .iter()
@@ -209,8 +224,11 @@ impl MainView {
             input.set_value(value, window, cx);
             input
         });
-        let sub = cx.subscribe_in(&input, window, |_, _, event, _, cx| {
+        let sub = cx.subscribe_in(&input, window, |this, input, event, _, cx| {
             if matches!(event, InputEvent::Change) {
+                if let Some(editor) = &mut this.editor {
+                    editor.touched.insert(input.entity_id());
+                }
                 cx.notify();
             }
         });
@@ -221,7 +239,7 @@ impl MainView {
         self.clear_editor();
         let generation = EDITOR_GENERATION.fetch_add(1, Ordering::Relaxed);
         let peers = tunnel.config.peers.len().max(1);
-        let all_traffic = tunnel.config.peers.is_empty() || tunnel.config.is_all_traffic();
+        let all_traffic = form::all_traffic_switch(&tunnel.config);
         let mut values = form::values(&tunnel.config, &tunnel.name);
         if tunnel.config.peers.is_empty() {
             for field in ["endpoint", "public_key", "routes", "keepalive", "psk"] {
@@ -244,6 +262,7 @@ impl MainView {
             all_traffic,
             advanced: false,
             submitted: false,
+            touched: HashSet::new(),
             revealed: None,
             generation,
             qr: None,
@@ -296,6 +315,9 @@ impl MainView {
             }
             Event::Reply(intent, response) => {
                 self.offline = false;
+                if matches!(intent, Intent::Action) && !matches!(response, Response::Error(_)) {
+                    self.notice = None;
+                }
                 if !matches!(intent, Intent::Refresh) {
                     self.busy = false;
                 }
@@ -311,6 +333,10 @@ impl MainView {
                             self.selected = Some(tunnel.id.clone());
                             self.editor = None;
                             self.send(Request::Connect { id: tunnel.id }, Intent::Action, cx);
+                        }
+                        Intent::DeleteAfterDisconnect => {
+                            self.selected = None;
+                            self.send(Request::Delete { id: tunnel.id }, Intent::Action, cx);
                         }
                         _ => {
                             if let Some(old) =
@@ -345,9 +371,7 @@ impl MainView {
                             tr(error_key(error.code))
                         });
                     }
-                    Response::Ok => {
-                        self.backend.send(Request::List, Intent::Refresh);
-                    }
+                    Response::Ok => {}
                 }
             }
             _ => {}
@@ -355,7 +379,28 @@ impl MainView {
         cx.notify();
     }
     fn start_edit(&mut self, id: TunnelId, cx: &mut Context<Self>) {
-        self.send(Request::Get { id }, Intent::Edit, cx);
+        let active = self
+            .snapshot
+            .tunnels
+            .iter()
+            .any(|t| t.id == id && t.status.state != ConnectionState::Off);
+        self.send(
+            if active {
+                Request::Disconnect { id }
+            } else {
+                Request::Get { id }
+            },
+            Intent::Edit,
+            cx,
+        );
+    }
+    fn delete(&mut self, id: TunnelId, cx: &mut Context<Self>) {
+        self.confirmation = None;
+        self.send(
+            Request::Disconnect { id },
+            Intent::DeleteAfterDisconnect,
+            cx,
+        );
     }
     fn save(&mut self, cx: &mut Context<Self>) {
         let Some(editor) = &mut self.editor else {
@@ -363,26 +408,37 @@ impl MainView {
         };
         editor.submitted = true;
         let values = editor.values(cx);
-        if let Ok((config, preshared_keys)) = form::build(
+        match form::build(
             &editor.tunnel.config,
             &values,
             editor.peers,
             editor.all_traffic,
         ) {
-            let request = Request::Save {
-                id: editor.tunnel.id.clone(),
-                name: values
-                    .get("name")
-                    .cloned()
-                    .unwrap_or_default()
-                    .trim()
-                    .to_owned(),
-                config,
-                preshared_keys,
-            };
-            self.send(request, Intent::SaveConnect, cx);
-        } else {
-            cx.notify();
+            Ok((config, preshared_keys)) => {
+                let request = Request::Save {
+                    id: editor.tunnel.id.clone(),
+                    name: values
+                        .get("name")
+                        .cloned()
+                        .unwrap_or_default()
+                        .trim()
+                        .to_owned(),
+                    config,
+                    preshared_keys,
+                };
+                self.send(request, Intent::SaveConnect, cx);
+            }
+            Err(errors) => {
+                if errors.keys().any(|key| {
+                    !matches!(
+                        key.as_str(),
+                        "name" | "addresses" | "dns" | "0.endpoint" | "0.public_key" | "0.routes"
+                    )
+                }) {
+                    editor.advanced = true;
+                }
+                cx.notify();
+            }
         }
     }
     fn add_peer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -401,6 +457,27 @@ impl MainView {
             editor.fields.insert(key, input);
             editor._subscriptions.push(sub);
         }
+        cx.notify();
+    }
+    fn remove_peer(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = &mut self.editor else {
+            return;
+        };
+        if index == 0 || index >= editor.peers {
+            return;
+        }
+        if let Some(input) = editor.fields.get(&form::key(index, "psk")) {
+            input.update(cx, |input, cx| input.set_value("", window, cx));
+        }
+        for field in ["endpoint", "public_key", "routes", "keepalive", "psk"] {
+            editor.fields.remove(&form::key(index, field));
+            for next in index + 1..editor.peers {
+                if let Some(input) = editor.fields.remove(&form::key(next, field)) {
+                    editor.fields.insert(form::key(next - 1, field), input);
+                }
+            }
+        }
+        editor.peers -= 1;
         cx.notify();
     }
     fn open_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -861,9 +938,13 @@ impl MainView {
                     .child(
                         Button::new("edit-tunnel")
                             .ghost()
-                            .label(tr("edit"))
+                            .label(tr(if tunnel.status.state != ConnectionState::Off {
+                                "disconnect_edit"
+                            } else {
+                                "edit"
+                            }))
                             .icon(IconName::Pencil)
-                            .disabled(self.busy)
+                            .disabled(self.busy || self.offline)
                             .on_click(
                                 cx.listener(move |this, _, _, cx| this.start_edit(id.clone(), cx)),
                             ),
@@ -948,7 +1029,9 @@ impl MainView {
     ) -> Div {
         let editor = self.editor.as_ref().unwrap();
         let input = &editor.fields[id];
-        let show_error = editor.submitted || !input.read(cx).value().is_empty();
+        let show_error = editor.submitted
+            || editor.touched.contains(&input.entity_id())
+            || !input.read(cx).value().is_empty();
         let error = errors.get(id).filter(|_| show_error);
         let view = cx.entity().downgrade();
         div()
@@ -1162,25 +1245,13 @@ impl MainView {
                 .flex()
                 .flex_col()
                 .gap_5()
-                .child(
-                    self.field(
-                        "0.psk",
-                        "preshared_key",
-                        if editor
-                            .tunnel
-                            .config
-                            .peers
-                            .first()
-                            .is_some_and(|p| p.has_preshared_key)
-                        {
-                            "hint_psk_set"
-                        } else {
-                            "hint_psk"
-                        },
-                        &errors,
-                        cx,
-                    ),
-                )
+                .child(self.field(
+                    "0.psk",
+                    "preshared_key",
+                    editor.psk_hint(0, cx),
+                    &errors,
+                    cx,
+                ))
                 .child(
                     div()
                         .flex()
@@ -1254,7 +1325,7 @@ impl MainView {
                         .child(small(tr("hint_private_key"))),
                 );
             for index in 1..editor.peers {
-                let mut peer = div()
+                let peer = div()
                     .flex()
                     .flex_col()
                     .gap_4()
@@ -1290,7 +1361,7 @@ impl MainView {
                     .child(self.field(
                         &form::key(index, "psk"),
                         "preshared_key",
-                        "hint_psk",
+                        editor.psk_hint(index, cx),
                         &errors,
                         cx,
                     ))
@@ -1300,31 +1371,17 @@ impl MainView {
                         "hint_keepalive",
                         &errors,
                         cx,
-                    ));
-                if index == editor.peers - 1 {
-                    peer = peer.child(
+                    ))
+                    .child(
                         Button::new(SharedString::from(format!("remove-peer-{index}")))
                             .ghost()
                             .small()
                             .label(tr("remove_peer"))
                             .disabled(self.busy)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                if let Some(editor) = &mut this.editor {
-                                    editor.peers -= 1;
-                                    if let Some(input) =
-                                        editor.fields.get(&form::key(editor.peers, "psk"))
-                                    {
-                                        input.update(cx, |input, cx| {
-                                            input.set_value("", window, cx)
-                                        });
-                                    }
-                                    let prefix = format!("{}.", editor.peers);
-                                    editor.fields.retain(|k, _| !k.starts_with(&prefix));
-                                }
-                                cx.notify();
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.remove_peer(index, window, cx)
                             })),
                     );
-                }
                 advanced = advanced.child(peer);
             }
             fields = fields.child(
@@ -1561,12 +1618,10 @@ impl MainView {
             }
         }
         if ranges.iter().any(|r| {
-            r.prefix() != 0
-                && self
-                    .snapshot
-                    .local_networks
-                    .iter()
-                    .any(|local| wge_config::overlaps(r, local))
+            self.snapshot
+                .local_networks
+                .iter()
+                .any(|local| wge_config::overlaps(r, local))
         }) {
             preview = preview.child(warning(rust_i18n::t!("overlap_local").into_owned()));
         }
@@ -1754,13 +1809,7 @@ impl MainView {
                                     if export {
                                         this.export(id.clone(), name.clone(), window, cx);
                                     } else {
-                                        this.confirmation = None;
-                                        this.selected = None;
-                                        this.send(
-                                            Request::Delete { id: id.clone() },
-                                            Intent::Action,
-                                            cx,
-                                        );
+                                        this.delete(id.clone(), cx);
                                     }
                                 })),
                         ),
@@ -1896,6 +1945,145 @@ fn error_key(code: ErrorCode) -> &'static str {
 
 #[cfg(test)]
 impl MainView {
+    #[allow(dead_code)]
+    pub fn field_focus(&self, field: &str, cx: &App) -> FocusHandle {
+        self.editor.as_ref().unwrap().fields[field]
+            .read(cx)
+            .focus_handle(cx)
+    }
+    #[allow(dead_code)]
+    pub fn editor_modes(&self) -> (bool, bool) {
+        let editor = self.editor.as_ref().unwrap();
+        (editor.all_traffic, editor.advanced)
+    }
+    #[allow(dead_code)]
+    pub fn check_service_actions(
+        &mut self,
+        commands: &mut tokio::sync::mpsc::UnboundedReceiver<Command>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut tunnel = self.editor.as_ref().unwrap().tunnel.clone();
+        let id = tunnel.id.clone();
+        self.clear_editor();
+        self.start_edit(id.clone(), cx);
+        assert!(
+            matches!(commands.try_recv(), Ok(Command::Request(Request::Disconnect { id: actual }, Intent::Edit)) if actual == id)
+        );
+        self.event(
+            Event::Reply(
+                Intent::Edit,
+                Response::Error(wge_ipc::ApiError::new(ErrorCode::Recovery, "fixture")),
+            ),
+            window,
+            cx,
+        );
+        assert!(self.editor.is_none());
+        assert!(commands.try_recv().is_err());
+        self.start_edit(id.clone(), cx);
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::Request(Request::Disconnect { .. }, Intent::Edit))
+        ));
+        tunnel.status = wge_ipc::TunnelStatus::default();
+        self.event(
+            Event::Reply(Intent::Edit, Response::Tunnel(tunnel.clone())),
+            window,
+            cx,
+        );
+        self.editor.as_ref().unwrap().fields["name"].update(cx, |input, cx| {
+            input.set_value("Renamed tunnel", window, cx)
+        });
+        self.save(cx);
+        assert!(
+            matches!(commands.try_recv(), Ok(Command::Request(Request::Save { name, .. }, Intent::SaveConnect)) if name == "Renamed tunnel")
+        );
+        tunnel.name = "Renamed tunnel".into();
+        self.event(
+            Event::Reply(Intent::SaveConnect, Response::Tunnel(tunnel.clone())),
+            window,
+            cx,
+        );
+        assert!(self.editor.is_none());
+        assert!(
+            matches!(commands.try_recv(), Ok(Command::Request(Request::Connect { id: actual }, Intent::Action)) if actual == id)
+        );
+        self.event(
+            Event::Reply(
+                Intent::Action,
+                Response::Error(wge_ipc::ApiError::new(ErrorCode::Endpoint, "fixture")),
+            ),
+            window,
+            cx,
+        );
+        assert_eq!(self.notice, Some(tr("api_endpoint")));
+        self.event(
+            Event::Reply(Intent::Action, Response::Tunnel(tunnel.clone())),
+            window,
+            cx,
+        );
+        assert!(self.notice.is_none());
+        self.delete(id.clone(), cx);
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::Request(
+                Request::Disconnect { .. },
+                Intent::DeleteAfterDisconnect
+            ))
+        ));
+        self.event(
+            Event::Reply(
+                Intent::DeleteAfterDisconnect,
+                Response::Error(wge_ipc::ApiError::new(ErrorCode::Recovery, "fixture")),
+            ),
+            window,
+            cx,
+        );
+        assert!(commands.try_recv().is_err());
+        assert_eq!(self.notice, Some(tr("api_recovery")));
+        self.delete(id.clone(), cx);
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::Request(
+                Request::Disconnect { .. },
+                Intent::DeleteAfterDisconnect
+            ))
+        ));
+        self.event(
+            Event::Reply(
+                Intent::DeleteAfterDisconnect,
+                Response::Tunnel(tunnel.clone()),
+            ),
+            window,
+            cx,
+        );
+        assert!(
+            matches!(commands.try_recv(), Ok(Command::Request(Request::Delete { id: actual }, Intent::Action)) if actual == id)
+        );
+        self.event(Event::Reply(Intent::Action, Response::Ok), window, cx);
+        self.edit(tunnel, window, cx);
+
+        self.add_peer(window, cx);
+        self.add_peer(window, cx);
+        let last = self.editor.as_ref().unwrap().fields["2.public_key"].clone();
+        last.update(cx, |input, cx| {
+            input.set_value("AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=", window, cx)
+        });
+        let removed_psk = self.editor.as_ref().unwrap().fields["1.psk"].clone();
+        removed_psk.update(cx, |input, cx| {
+            input.set_value("private fixture", window, cx)
+        });
+        self.remove_peer(1, window, cx);
+        let editor = self.editor.as_ref().unwrap();
+        assert_eq!(editor.peers, 2);
+        assert_eq!(editor.fields["1.public_key"], last);
+        assert_eq!(removed_psk.read(cx).text().len(), 0);
+        assert!(!editor.fields.contains_key("2.public_key"));
+        self.save(cx);
+        assert!(commands.try_recv().is_err());
+        assert!(self.editor.as_ref().unwrap().advanced);
+        self.remove_peer(1, window, cx);
+    }
     #[allow(dead_code)]
     pub fn check_preshared_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let key = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=";

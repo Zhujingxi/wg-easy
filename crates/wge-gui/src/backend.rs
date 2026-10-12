@@ -7,6 +7,7 @@ pub enum Intent {
     Edit,
     Action,
     SaveConnect,
+    DeleteAfterDisconnect,
     Reveal(TunnelId, u64),
     Export(PathBuf),
 }
@@ -59,11 +60,14 @@ pub fn start(events: mpsc::Sender<Event>) -> Backend {
             let mut client = None;
             let mut delay = Duration::from_secs(1);
             let mut previous = Vec::new();
+            let mut refresh_pending = false;
             loop {
-                let command = tokio::select! {
+                let command = if std::mem::take(&mut refresh_pending) {
+                    Command::Request(Request::List, Intent::Refresh)
+                } else { tokio::select! {
                     command = rx.recv() => match command { Some(command) => command, None => break },
                     _ = tokio::time::sleep(delay) => Command::Request(Request::List, Intent::Refresh),
-                };
+                }};
                 let (request, intent) = match command {
                     Command::Request(request, intent) => (request, intent),
                     command => {
@@ -80,6 +84,7 @@ pub fn start(events: mpsc::Sender<Event>) -> Backend {
                         }
                     }
                 };
+                let mutates = !matches!(&request, Request::List | Request::ListAfter { .. } | Request::Get { .. } | Request::RevealPrivateKey { .. } | Request::Export { .. });
                 if client.is_none() { client = Client::connect_default().await.ok(); }
                 let response = match &mut client {
                     Some(client) => match client.request(request).await {
@@ -93,6 +98,7 @@ pub fn start(events: mpsc::Sender<Event>) -> Backend {
                 };
                 match response {
                     Some(response) => {
+                        refresh_pending = mutates;
                         if let Response::Snapshot(snapshot) = &response {
                             delay = if snapshot.tunnels.iter().any(|t| !matches!(t.status.state, ConnectionState::Off | ConnectionState::Error)) { Duration::from_secs(1) } else { Duration::from_secs(5) };
                             let encoded = serde_json::to_vec(snapshot).unwrap_or_default();

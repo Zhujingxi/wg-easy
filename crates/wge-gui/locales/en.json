@@ -26,6 +26,7 @@
   "ranges_count": "%{count} ranges",
   "toggle_tunnel": "Connect %{name}",
   "edit": "Edit",
+  "disconnect_edit": "Disconnect and edit",
   "handshake": "LAST HANDSHAKE",
   "received": "RECEIVED",
   "sent": "SENT",
