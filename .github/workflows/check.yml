@@ -91,6 +91,7 @@ jobs:
         run: cargo test -p wge-engine -p wge-platform --release --no-run --locked
       - name: Encrypted IPv4/IPv6, leak prevention and crash recovery
         run: |
+          test -c /dev/net/tun || { echo '::error::Expose /dev/net/tun in the runner guest to run isolated tunnel tests.'; exit 1; }
           mkdir -p measurements
           export WGE_HOST_NETNS="$(readlink /proc/self/ns/net)"
           export WGE_METRICS_PATH="$PWD/measurements/tunnel-linux.json"
