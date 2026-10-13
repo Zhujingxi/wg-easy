@@ -8,5 +8,8 @@ license.workspace = true
 
 [dependencies]
 wge-config.workspace = true
-
 thiserror.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+zeroize = "1"
+tokio = { workspace = true, features = ["io-util"] }
