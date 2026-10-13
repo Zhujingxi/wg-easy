@@ -13,9 +13,9 @@ pub trait Network: Send + Sync {
         &mut self,
         config: &TunnelConfig,
         name: &str,
-    ) -> impl Future<Output = Result<Self::Handle, String>> + Send;
+    ) -> impl Future<Output = Result<Self::Handle, ApiError>> + Send;
     fn status(handle: &Self::Handle) -> impl Future<Output = TunnelStatus> + Send;
-    fn stop(handle: Self::Handle) -> impl Future<Output = Result<(), String>> + Send;
+    fn stop(handle: Self::Handle) -> impl Future<Output = Result<(), ApiError>> + Send;
     fn local_networks(&self) -> impl Future<Output = Vec<wge_config::IpNetwork>> + Send;
 }
 struct Entry<H> {
@@ -28,6 +28,7 @@ pub struct Service<N: Network> {
     store: Store,
     entries: HashMap<TunnelId, Entry<N::Handle>>,
     network: N,
+    recovery_required: bool,
 }
 impl<N: Network> Service<N> {
     pub fn open(directory: PathBuf, network: N) -> std::io::Result<Self> {
@@ -49,6 +50,7 @@ impl<N: Network> Service<N> {
             store,
             entries,
             network,
+            recovery_required: false,
         })
     }
     pub async fn handle(&mut self, owner: &str, request: Request) -> Response {
@@ -59,20 +61,12 @@ impl<N: Network> Service<N> {
     }
     async fn execute(&mut self, owner: &str, request: Request) -> Result<Response, ApiError> {
         match request {
-            Request::List => {
-                let mut tunnels = Vec::new();
-                for entry in self
-                    .entries
-                    .values()
-                    .filter(|entry| entry.stored.owner == owner)
-                {
-                    tunnels.push(Self::view(entry).await);
+            Request::List => self.snapshot(owner, None).await,
+            Request::ListAfter { after } => {
+                if !after.is_valid() {
+                    return Err(validation("Invalid list cursor"));
                 }
-                tunnels.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.0.cmp(&b.id.0)));
-                Ok(Response::Snapshot(Snapshot {
-                    tunnels,
-                    local_networks: self.network.local_networks().await,
-                }))
+                self.snapshot(owner, Some(after)).await
             }
             Request::BeginDraft => {
                 self.check_quota(owner)?;
@@ -102,8 +96,15 @@ impl<N: Network> Service<N> {
             Request::Import { name, config } => {
                 self.check_quota(owner)?;
                 validate_name(&name)?;
-                let config = wge_config::parse(config.expose())
-                    .map_err(|error| ApiError::new(ErrorCode::Validation, error.to_string()))?;
+                let config = wge_config::parse(config.expose()).map_err(|error| {
+                    let code = match error.kind {
+                        wge_config::ErrorKind::ScriptHook => ErrorCode::ScriptHook,
+                        wge_config::ErrorKind::UnsupportedField
+                        | wge_config::ErrorKind::UnsupportedSection => ErrorCode::UnsupportedConfig,
+                        _ => ErrorCode::Validation,
+                    };
+                    ApiError::new(code, error.to_string())
+                })?;
                 self.insert_draft(owner, name, config).await
             }
             Request::Get { id } => Ok(Response::Tunnel(Self::view(self.entry(owner, &id)?).await)),
@@ -116,6 +117,9 @@ impl<N: Network> Service<N> {
                 validate_name(&name)?;
                 let entry = self.entry(owner, &id)?;
                 require_off(entry)?;
+                config
+                    .validate()
+                    .map_err(|error| validation(error.to_string()))?;
                 if entry.stored.config.interface.private_key.public_key()
                     != config.interface.public_key
                 {
@@ -216,6 +220,12 @@ impl<N: Network> Service<N> {
             }
             Request::Connect { id } => {
                 let entry = self.entry(owner, &id)?;
+                if self.recovery_required {
+                    return Err(ApiError::new(
+                        ErrorCode::Recovery,
+                        "Restart the service to finish restoring the previous network settings before connecting",
+                    ));
+                }
                 if entry.running.is_some() {
                     return Ok(Response::Tunnel(Self::view(entry).await));
                 }
@@ -234,7 +244,7 @@ impl<N: Network> Service<N> {
                         return Err(ApiError {
                             code: ErrorCode::Conflict,
                             message: "The traffic ranges overlap an active tunnel".into(),
-                            conflict: Some(RouteConflict {
+                            conflict: (active.stored.owner == owner).then(|| RouteConflict {
                                 tunnel_name: active.stored.name.clone(),
                                 requested_range,
                                 active_range,
@@ -251,12 +261,8 @@ impl<N: Network> Service<N> {
                         entry.running = Some(handle);
                         entry.failure = None;
                     }
-                    Err(_error) => {
-                        // OS error strings can contain provider data; the protocol exposes a safe diagnostic.
-                        let error = ApiError::new(
-                            ErrorCode::Network,
-                            "The tunnel could not start. Check the server address, network access and service permissions.",
-                        );
+                    Err(error) => {
+                        self.recovery_required = error.code == ErrorCode::Recovery;
                         entry.failure = Some(error.clone());
                         return Err(error);
                     }
@@ -266,11 +272,17 @@ impl<N: Network> Service<N> {
             Request::Disconnect { id } => {
                 self.entry(owner, &id)?;
                 let entry = self.entries.get_mut(&id).expect("authorized entry exists");
+                if let Some(error) = &entry.failure
+                    && error.code == ErrorCode::Recovery
+                {
+                    return Err(error.clone());
+                }
                 if let Some(handle) = entry.running.take()
                     && N::stop(handle).await.is_err()
                 {
+                    self.recovery_required = true;
                     let error = ApiError::new(
-                        ErrorCode::Network,
+                        ErrorCode::Recovery,
                         "Some network settings could not be restored. Restart the service to retry recovery.",
                     );
                     entry.failure = Some(error.clone());
@@ -281,14 +293,8 @@ impl<N: Network> Service<N> {
             }
             Request::RevealPrivateKey { id } => {
                 let entry = self.entry(owner, &id)?;
-                Ok(Response::Secret(SensitiveText::new(
-                    entry
-                        .stored
-                        .config
-                        .interface
-                        .private_key
-                        .expose_base64()
-                        .to_string(),
+                Ok(Response::Secret(SensitiveText::from_zeroizing(
+                    entry.stored.config.interface.private_key.expose_base64(),
                 )))
             }
             Request::Export { id, confirmed } => {
@@ -300,7 +306,7 @@ impl<N: Network> Service<N> {
                 }
                 let text = wge_config::write(&entry.stored.config)
                     .map_err(|_| validation("Save a complete tunnel before exporting"))?;
-                Ok(Response::Secret(SensitiveText::new(text.to_string())))
+                Ok(Response::Secret(SensitiveText::from_zeroizing(text)))
             }
         }
     }
@@ -349,6 +355,46 @@ impl<N: Network> Service<N> {
         self.entries.insert(id, entry);
         Ok(Response::Tunnel(tunnel))
     }
+    async fn snapshot(&self, owner: &str, after: Option<TunnelId>) -> Result<Response, ApiError> {
+        let mut entries: Vec<_> = self
+            .entries
+            .values()
+            .filter(|entry| {
+                entry.stored.owner == owner
+                    && after
+                        .as_ref()
+                        .is_none_or(|after| entry.stored.id.0 > after.0)
+            })
+            .collect();
+        entries.sort_unstable_by(|a, b| a.stored.id.0.cmp(&b.stored.id.0));
+        let mut response = Response::Snapshot(Snapshot {
+            tunnels: vec![],
+            local_networks: if after.is_none() {
+                self.network.local_networks().await
+            } else {
+                vec![]
+            },
+            next_page: None,
+        });
+        // Each entry's envelope overhead covers its comma, and 64 bytes covers the cursor.
+        let mut length = frame_length(&response).map_err(|_| internal())? + 64;
+        let Response::Snapshot(snapshot) = &mut response else {
+            unreachable!()
+        };
+        for entry in entries {
+            let tunnel = Self::view(entry).await;
+            let added = frame_length(&tunnel).map_err(|_| internal())?;
+            if length + added > MAX_FRAME_BYTES {
+                let last = snapshot.tunnels.last().ok_or_else(internal)?;
+                snapshot.next_page = Some(last.id.clone());
+                break;
+            }
+            length += added;
+            snapshot.tunnels.push(tunnel);
+        }
+        Ok(response)
+    }
+
     fn entry(&self, owner: &str, id: &TunnelId) -> Result<&Entry<N::Handle>, ApiError> {
         if !id.is_valid() {
             return Err(validation("Invalid tunnel ID"));
@@ -376,12 +422,21 @@ impl<N: Network> Service<N> {
             saved: entry.saved,
         }
     }
-    pub async fn shutdown(&mut self) {
+    pub async fn shutdown(&mut self) -> Result<(), ApiError> {
         for entry in self.entries.values_mut() {
-            if let Some(handle) = entry.running.take() {
-                let _ = N::stop(handle).await;
+            if let Some(handle) = entry.running.take()
+                && N::stop(handle).await.is_err()
+            {
+                self.recovery_required = true;
             }
         }
+        if self.recovery_required {
+            return Err(ApiError::new(
+                ErrorCode::Recovery,
+                "Restart the service to finish restoring network settings",
+            ));
+        }
+        Ok(())
     }
 }
 fn validate_name(name: &str) -> Result<(), ApiError> {
@@ -389,6 +444,11 @@ fn validate_name(name: &str) -> Result<(), ApiError> {
 }
 
 fn require_off<H>(entry: &Entry<H>) -> Result<(), ApiError> {
+    if let Some(error) = &entry.failure
+        && error.code == ErrorCode::Recovery
+    {
+        return Err(error.clone());
+    }
     if entry.running.is_some() {
         return Err(ApiError::new(
             ErrorCode::Busy,
@@ -407,16 +467,67 @@ fn internal() -> ApiError {
     )
 }
 fn conflicting_ranges(a: &TunnelConfig, b: &TunnelConfig) -> Option<(String, String)> {
-    let all_traffic = a.is_all_traffic() || b.is_all_traffic();
-    for requested in a.allowed_ips() {
-        for active in b.allowed_ips() {
-            if all_traffic
-                || requested.contains(active.network())
-                || active.contains(requested.network())
-            {
-                return Some((requested.to_string(), active.to_string()));
-            }
+    if a.is_all_traffic() || b.is_all_traffic() {
+        return Some((
+            a.allowed_ips().next()?.to_string(),
+            b.allowed_ips().next()?.to_string(),
+        ));
+    }
+    let mut requested: Vec<_> = a.allowed_ips().collect();
+    let mut active: Vec<_> = b.allowed_ips().collect();
+    requested.sort_unstable_by_key(|range| range.network());
+    active.sort_unstable_by_key(|range| range.network());
+    let mut requested = requested.into_iter().peekable();
+    let mut active = active.into_iter().peekable();
+    // Sorted disjoint ranges can be skipped once, rather than compared with every route.
+    while let (Some(left), Some(right)) = (requested.peek(), active.peek()) {
+        if wge_config::overlaps(left, right) {
+            return Some((left.to_string(), right.to_string()));
+        }
+        if left.network() < right.network() {
+            requested.next();
+        } else {
+            active.next();
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sorted_conflict_scan_handles_nested_ranges_and_both_families() {
+        let text = "[Interface]\nPrivateKey = AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=\nAddress = 10.8.0.2/24\n[Peer]\nPublicKey = AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=\nAllowedIPs = 10.0.0.0/8\n";
+        let mut a = wge_config::parse(text).unwrap();
+        let mut b = a.clone();
+        let cases = [
+            "10.0.0.0/24",
+            "10.0.0.0/8",
+            "10.128.0.0/16",
+            "192.168.0.0/16",
+            "2001:db8::/64",
+            "2001:db8::/32",
+            "2001:db8:1::/64",
+            "fd00::/8",
+        ];
+        for first in 0..cases.len() {
+            for second in 0..cases.len() {
+                a.peers[0].allowed_ips = vec![
+                    cases[first].parse().unwrap(),
+                    cases[(first + 1) % cases.len()].parse().unwrap(),
+                ];
+                b.peers[0].allowed_ips = vec![
+                    cases[second].parse().unwrap(),
+                    cases[(second + 1) % cases.len()].parse().unwrap(),
+                ];
+                let expected = a.allowed_ips().any(|left| {
+                    b.allowed_ips()
+                        .any(|right| wge_config::overlaps(left, right))
+                });
+                assert_eq!(conflicting_ranges(&a, &b).is_some(), expected);
+            }
+        }
+    }
 }

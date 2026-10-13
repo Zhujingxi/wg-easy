@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+exclude = ["vendor/pfctl", "vendor/gotatun"]
 
 [workspace.package]
 version = "0.1.0"
@@ -9,14 +10,14 @@ rust-version = "1.95"
 license = "MIT"
 
 [workspace.dependencies]
-wge-config = { path = "crates/wge-config" }
-wge-engine = { path = "crates/wge-engine" }
-wge-ipc = { path = "crates/wge-ipc" }
-wge-platform = { path = "crates/wge-platform" }
+wge-config = { version = "0.1.0", path = "crates/wge-config" }
+wge-engine = { version = "0.1.0", path = "crates/wge-engine" }
+wge-ipc = { version = "0.1.0", path = "crates/wge-ipc" }
+wge-platform = { version = "0.1.0", path = "crates/wge-platform" }
 
 anyhow = "1"
 base64 = "0.22"
-gotatun = { version = "0.9.2", features = ["device", "tun"] }
+gotatun = { path = "vendor/gotatun", version = "0.9.2", features = ["device", "tun"] }
 ipnetwork = "0.21"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }

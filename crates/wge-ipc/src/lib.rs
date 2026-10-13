@@ -2,6 +2,7 @@
 #![forbid(unsafe_code)]
 
 mod transport;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 pub use transport::*;
@@ -27,6 +28,10 @@ impl SensitiveText {
     pub fn expose(&self) -> &str {
         &self.0
     }
+
+    pub fn from_zeroizing(value: Zeroizing<String>) -> Self {
+        Self(value)
+    }
 }
 impl fmt::Debug for SensitiveText {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -35,12 +40,45 @@ impl fmt::Debug for SensitiveText {
 }
 impl Serialize for SensitiveText {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(self.expose())
+        if self.expose().len() > MAX_FRAME_BYTES {
+            return Err(serde::ser::Error::custom(
+                "Secret transfer exceeds the size limit",
+            ));
+        }
+        // Escape-free JSON avoids serde's temporary unzeroized string scratch buffer.
+        let encoded = Zeroizing::new(STANDARD.encode(self.expose()));
+        serializer.serialize_str(&encoded)
     }
 }
 impl<'de> Deserialize<'de> for SensitiveText {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        String::deserialize(deserializer).map(Self::new)
+        struct SecretVisitor;
+        impl<'de> serde::de::Visitor<'de> for SecretVisitor {
+            type Value = SensitiveText;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a Base64 encoded secret transfer")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                if value.len() > MAX_FRAME_BYTES {
+                    return Err(E::custom("Secret transfer exceeds the size limit"));
+                }
+                let mut decoded =
+                    Zeroizing::new(vec![0; base64::decoded_len_estimate(value.len())]);
+                let length = STANDARD
+                    .decode_slice(value, &mut decoded)
+                    .map_err(|_| E::custom("Invalid secret transfer"))?;
+                let value = std::str::from_utf8(&decoded[..length])
+                    .map_err(|_| E::custom("Invalid secret transfer"))?;
+                Ok(SensitiveText::new(value.to_owned()))
+            }
+
+            fn visit_string<E: serde::de::Error>(self, value: String) -> Result<Self::Value, E> {
+                self.visit_str(&Zeroizing::new(value))
+            }
+        }
+        deserializer.deserialize_str(SecretVisitor)
     }
 }
 
@@ -70,6 +108,8 @@ pub struct Tunnel {
 pub struct Snapshot {
     pub tunnels: Vec<Tunnel>,
     pub local_networks: Vec<IpNetwork>,
+    #[serde(default)]
+    pub next_page: Option<TunnelId>,
 }
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -107,6 +147,9 @@ pub struct PeerSecretUpdate {
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
     List,
+    ListAfter {
+        after: TunnelId,
+    },
     BeginDraft,
     Get {
         id: TunnelId,
@@ -176,11 +219,18 @@ impl ApiError {
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
     Validation,
+    ScriptHook,
+    UnsupportedConfig,
     NotFound,
     Conflict,
     Unauthorized,
     Busy,
     Network,
+    Endpoint,
+    Dns,
+    Permission,
+    Driver,
+    Recovery,
     Protocol,
     Internal,
 }
@@ -217,7 +267,10 @@ mod tests {
         };
         assert!(!format!("{request:?}").contains("PRIVATE MATERIAL"));
         let encoded = serde_json::to_string(&request).unwrap();
-        assert!(encoded.contains("PRIVATE MATERIAL"));
+        let decoded: Request = serde_json::from_str(&encoded).unwrap();
+        assert!(
+            matches!(decoded, Request::Import { config, .. } if config.expose() == "PRIVATE MATERIAL")
+        );
         let response = Response::Secret(SensitiveText::new("PRIVATE MATERIAL".into()));
         assert!(!format!("{response:?}").contains("PRIVATE MATERIAL"));
     }

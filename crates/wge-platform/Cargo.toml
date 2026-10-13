@@ -8,5 +8,31 @@ license.workspace = true
 
 [dependencies]
 wge-config.workspace = true
-
 thiserror.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+tun.workspace = true
+route_manager = "0.2.15"
+netconfig = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+netlink-packet-core = "0.9"
+netlink-packet-route = "0.33"
+netlink-sys = "0.8"
+zbus = { version = "5", default-features = false, features = ["tokio"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-service = "0.8"
+windows-sys = { version = "0.61", features = ["Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock", "Win32_System_Registry", "Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_Memory", "Win32_Storage_FileSystem", "Win32_NetworkManagement_Dns", "Win32_NetworkManagement_WindowsFilteringPlatform", "Win32_System_Rpc"] }
+tun = { workspace = true, features = ["verify_binary_signature"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+pfctl = { path = "../../vendor/pfctl", version = "0.7" }
+system-configuration = "0.7"
+core-foundation = "0.9"
+
+[dev-dependencies]
+tempfile = "3"
+socket2 = { version = "0.6", features = ["all"] }
