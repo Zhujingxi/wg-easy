@@ -82,6 +82,9 @@ Completed on Linux:
 - Windows GNU engine/daemon all-target check and Clippy with warnings denied
   pass. Native Windows/macOS networking was not run, and macOS was not compiled
   in this environment.
+- CI fuzzing explicitly selects the Linux GNU target because the prebuilt
+  cargo-fuzz tool defaults to musl, which cannot run the address sanitizer.
+  The corrected command passed locally with 4.6 million inputs in 61 seconds.
 
 ## Open questions
 
