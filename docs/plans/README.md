@@ -25,7 +25,7 @@ root holds the scope and the rules; plans hold how a specific piece gets built.
 
 | Plan | Status |
 |---|---|
-| (none yet) | |
+| [0001: Configuration foundation](0001-config.md) | done |
 
 ## To verify before the first plans
 
