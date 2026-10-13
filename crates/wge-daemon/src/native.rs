@@ -52,12 +52,26 @@ impl Network for NativeNetwork {
         TunnelStatus {
             state,
             peers,
-            error: (state == ConnectionState::Error).then(|| {
-                ApiError::new(
-                    ErrorCode::Network,
-                    "The tunnel stopped unexpectedly. Disconnect and reconnect it.",
-                )
-            }),
+            error: status
+                .error
+                .map(|message| {
+                    ApiError::new(
+                        if state == ConnectionState::NoHandshake {
+                            ErrorCode::Endpoint
+                        } else {
+                            ErrorCode::Network
+                        },
+                        message,
+                    )
+                })
+                .or_else(|| {
+                    (state == ConnectionState::Error).then(|| {
+                        ApiError::new(
+                            ErrorCode::Network,
+                            "The tunnel stopped unexpectedly. Disconnect and reconnect it.",
+                        )
+                    })
+                }),
         }
     }
     async fn stop(handle: Self::Handle) -> Result<(), ApiError> {
@@ -68,7 +82,7 @@ impl Network for NativeNetwork {
     }
 }
 
-fn api_error(error: wge_engine::Error) -> ApiError {
+pub(crate) fn api_error(error: wge_engine::Error) -> ApiError {
     use wge_engine::Error;
     let code = match &error {
         Error::Resolve(_) => ErrorCode::Endpoint,

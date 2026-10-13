@@ -79,19 +79,7 @@ pub fn split(value: &str) -> impl Iterator<Item = &str> {
 }
 
 pub fn endpoint(value: &str) -> Result<Endpoint, wge_config::ConfigError> {
-    if let Ok(address) = value.parse::<IpAddr>() {
-        return format!(
-            "{}{address}{}:51820",
-            if address.is_ipv6() { "[" } else { "" },
-            if address.is_ipv6() { "]" } else { "" }
-        )
-        .parse();
-    }
-    if !value.contains(':') {
-        format!("{value}:51820").parse()
-    } else {
-        value.parse()
-    }
+    value.parse()
 }
 
 pub fn build(
@@ -248,10 +236,11 @@ mod tests {
     use super::*;
     #[test]
     fn server_port_defaults_for_both_ip_families_and_names() {
-        for server in ["vpn.example.com", "192.0.2.1", "2001:db8::1"] {
-            assert_eq!(endpoint(server).unwrap().port, 51820);
+        assert_eq!(endpoint("vpn.example.com").unwrap().port, None);
+        for server in ["192.0.2.1", "2001:db8::1"] {
+            assert_eq!(endpoint(server).unwrap().port, Some(51820));
         }
-        assert_eq!(endpoint("[2001:db8::1]:1234").unwrap().port, 1234);
+        assert_eq!(endpoint("[2001:db8::1]:1234").unwrap().port, Some(1234));
         assert!(endpoint("bad server").is_err());
     }
     #[test]
@@ -328,7 +317,7 @@ mod tests {
                 .into(),
         );
         let (config, _) = build(&draft, &fields, 1, all_traffic_switch(&draft)).unwrap();
-        assert_eq!(config.peers[0].endpoint.as_ref().unwrap().port, 51820);
+        assert_eq!(config.peers[0].endpoint.as_ref().unwrap().port, None);
         assert_eq!(config.peers[0].allowed_ips.len(), 2);
         fields.remove("0.endpoint");
         assert!(

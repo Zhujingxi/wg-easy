@@ -96,8 +96,9 @@ jobs:
           test -c /dev/net/tun || { echo '::error::Expose /dev/net/tun in the runner guest to run isolated tunnel tests.'; exit 1; }
           mkdir -p measurements
           export WGE_HOST_NETNS="$(readlink /proc/self/ns/net)"
+          export WGE_HOST_MNTNS="$(readlink /proc/self/ns/mnt)"
           export WGE_METRICS_PATH="$PWD/measurements/tunnel-linux.json"
-          unshare --user --map-root-user --net cargo test -p wge-engine -p wge-platform --release --locked -- namespace_ --ignored --nocapture --test-threads=1
+          unshare --user --map-root-user --mount --net cargo test -p wge-engine -p wge-platform --release --locked -- namespace_ --ignored --nocapture --test-threads=1
       - name: Real resolver DNS selection and recovery in private namespaces
         run: ./scripts/test-resolved.sh
       - uses: actions/upload-artifact@v4

@@ -152,6 +152,8 @@ Import is a shortcut into the add-tunnel screen, not a separate flow.
 | NW-2 | While an "all traffic" tunnel is up, DNS and IPv6 traffic also use the tunnel. |
 | NW-3 | When a tunnel is switched off, routes and DNS return to what they were. |
 | NW-4 | If the background service crashes, it restores routes and DNS when it restarts. |
+| NW-5 | A server hostname without a port automatically discovers `_wireguard._udp.<hostname>` DNS SRV records and resolves IPv4 and IPv6 targets. Explicit ports bypass SRV. Missing records fall back to port 51820; DNS failures are reported. |
+| NW-6 | Failed discovery endpoints try alternative addresses and reconnect with fresh DNS after exhausting candidates. Healthy connections stay stable. Exported standard configs contain a resolved endpoint snapshot and a comment preserving discovery for wg-easy reimport. |
 
 ### 6.8 Language
 

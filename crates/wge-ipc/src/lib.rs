@@ -9,7 +9,7 @@ pub use transport::*;
 use wge_config::{IpNetwork, PublicConfig, PublicKey};
 use zeroize::Zeroizing;
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 #[cfg(target_os = "linux")]
 pub const DEFAULT_ENDPOINT: &str = "/run/wireguardeasy/control.sock";

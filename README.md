@@ -35,6 +35,29 @@ after a reboot or service restart.
 The interface is available in English and Japanese. Every function is available
 in the window, including on desktops without a tray.
 
+Enter a server hostname without a port, such as `vpn.example.com`, to discover
+`_wireguard._udp.vpn.example.com` DNS SRV records automatically. SRV provides the
+target hostname and port; its A and AAAA records provide IPv4 and IPv6 addresses.
+For example:
+
+```dns
+_wireguard._udp.vpn.example.com. 300 IN SRV 0 100 51820 server.example.com.
+server.example.com.             300 IN A    203.0.113.10
+server.example.com.             300 IN AAAA 2001:db8::10
+```
+
+Missing SRV records fall back to the entered hostname on port 51820. An explicit
+`hostname:port` or IP address bypasses SRV. Failed handshakes try alternative
+addresses; discovery tunnels reconnect with fresh DNS after exhausting them.
+Healthy connections stay on their working endpoint. A reconnect briefly restores
+ordinary networking and interrupts all peers in that tunnel. Changing the server
+public key still requires editing the client. DNS caches can delay DNS changes.
+
+Exports contain a resolved endpoint snapshot for standard WireGuard clients.
+A `# wg-easy-srv:` comment preserves automatic discovery when reimported here;
+other clients use the snapshot. Existing imported `hostname:port` endpoints keep
+their explicit port; remove the port in the editor to enable discovery.
+
 ## Installers
 
 The **Packages** workflow builds these unsigned installers and SHA256 checksums:
@@ -77,7 +100,8 @@ network tests use isolated Linux namespaces and refuse to alter the host network
 
 ```sh
 WGE_HOST_NETNS="$(readlink /proc/self/ns/net)" \
-  unshare --user --map-root-user --net \
+WGE_HOST_MNTNS="$(readlink /proc/self/ns/mnt)" \
+  unshare --user --map-root-user --mount --net \
   cargo test -p wge-engine -p wge-platform -- namespace_ --ignored --nocapture --test-threads=1
 ```
 

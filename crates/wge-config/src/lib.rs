@@ -18,7 +18,7 @@ pub use model::{
     InterfaceConfig, MAX_ADDRESSES, MAX_CONFIG_BYTES, MAX_PEERS, MAX_ROUTES, PeerConfig,
     PublicConfig, PublicInterface, PublicPeer, TunnelConfig, validate_domain, validate_name,
 };
-pub use parser::{parse, write};
+pub use parser::{parse, write, write_resolved};
 pub use ranges::{
     RangeCoverage, RouteOverlap, coverage, overlaps, route_overlaps, routes_all_traffic,
     server_snippet,

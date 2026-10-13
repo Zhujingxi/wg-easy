@@ -67,6 +67,33 @@ impl From<netconfig::Error> for Error {
     }
 }
 
+/// Ignore unusable address families before installing endpoint bypasses.
+pub fn routable_endpoints(endpoints: &[SocketAddr]) -> Result<Vec<SocketAddr>, Error> {
+    #[cfg(windows)]
+    use windows_sys::Win32::Foundation::{ERROR_NETWORK_UNREACHABLE, ERROR_NOT_FOUND};
+    let mut manager = RouteManager::new()?;
+    let mut result = Vec::new();
+    for endpoint in endpoints {
+        let routed = match manager.find_route(&endpoint.ip()) {
+            Ok(route) => route.is_some(),
+            #[cfg(windows)]
+            Err(error)
+                if matches!(
+                    error.raw_os_error().map(|code| code as u32),
+                    Some(ERROR_NOT_FOUND | ERROR_NETWORK_UNREACHABLE)
+                ) =>
+            {
+                false
+            }
+            Err(error) => return Err(error.into()),
+        };
+        if routed && !result.contains(endpoint) {
+            result.push(*endpoint);
+        }
+    }
+    Ok(result)
+}
+
 /// Must be stopped explicitly so DNS and endpoint bypasses are restored.
 pub struct Network {
     path: PathBuf,
@@ -142,6 +169,10 @@ struct Journal {
 }
 
 impl Network {
+    pub fn interface_name(&self) -> &str {
+        &self.journal.interface_name
+    }
+
     /// Configures native networking. Call only after daemon-side validation.
     pub async fn create(
         config: &TunnelConfig,
@@ -361,6 +392,22 @@ impl Network {
         sync_directory(self.path.parent().unwrap())?;
         Ok(())
     }
+}
+
+/// gotatun can release its last tun handle after its stop future returns.
+pub async fn wait_for_interface_removal(name: &str) -> Result<(), Error> {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while netconfig::Interface::try_from_name(name).is_ok() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .map_err(|_| {
+        Error::Io(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "The previous tunnel interface has not been released",
+        ))
+    })
 }
 
 fn plan_routes(
