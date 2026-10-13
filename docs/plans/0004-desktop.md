@@ -57,7 +57,7 @@ Checked 2026-10-12 against the published archives and upstream repository:
 
 ## Validation
 
-- Linux `cargo build -p wge-gui` and all ten normal tests pass: IPv4/IPv6
+- Linux `cargo build -p wge-gui` and all twelve normal tests pass: IPv4/IPv6
   endpoint defaults, public form conversion, QR config round-trip/rejection,
   commented config import, non-overwriting export, login defaults and quoting,
   complete English/Japanese key parity, and imported IPv4 MTU/automatic port
@@ -162,3 +162,62 @@ candidate selection, Wayland screen-capture permission behavior, and native
 Windows/macOS tray/login behavior still need desktop acceptance runs. macOS
 requires its screen-recording permission for QR scanning. These checks are not
 claimed by the Linux preview or the Windows cross-check.
+
+## Integrated service and PRD audit
+
+The editor now preserves imported IPv4-only default routes, half-default routes,
+default routes on extra peers, and peers without an endpoint. Only the canonical
+dual-family default on the first peer enables the all-traffic switch. A new draft
+still requires its server address. Blank optional peer rows are ignored; partial
+rows are validated, and invalid advanced fields expand Advanced on submission.
+Every extra peer can be removed without losing later peers. Stored PSK hints follow
+the peer's current public key. Self/duplicate peer keys highlight the offending
+row, and clearing a touched required field keeps its error visible.
+
+An active tunnel offers **Disconnect and edit**. Confirmed deletion disconnects
+before deleting. Both operations stop on a recovery error; closing the window
+after confirming deletion still completes it. Successful actions clear old
+notices, and the worker refreshes status/tray immediately after every mutation,
+including failed starts. Default routes also receive local-network overlap
+warnings.
+
+The service contracts were checked against the actual daemon implementation and
+its integration tests: drafts contain a generated name/key and DNS default;
+Save returns an Off saved tunnel; Connect returns the engine's honest state;
+failed Disconnect returns Recovery and continues blocking mutation. GUI native
+assertions drive production handlers with typed responses and verify edit/save/
+connect/delete order, error stops, rename, clearing an old error, middle-peer
+removal and opening Advanced on an invalid extra peer. These assertions do not
+claim a live privileged-daemon GUI session.
+
+| PRD UI requirements | Implementation and evidence |
+|---|---|
+| IN-5–6, CS-5–7 | Windowless tray lifecycle, explicit quit mode, off-by-default native login registration; background process and missing-tray runs. Daemon owns tunnel/reboot state. |
+| AT-1–4 | BeginDraft, generated public key and copy, one grouped editor; unit test fills exactly three values and checks default port/routes. |
+| AT-5–7, AT-9 | Shared hinted/validated fields, Advanced, same edit/rename form, safe active edit/delete chains; unit and native command assertions. |
+| AT-8, CS-1–4 | Save then Connect, switches and translated engine states/errors, handshake age and byte counters; native handler assertions and screenshot fixtures, daemon state tests. |
+| AT-10, SP-1–2 | Explicit Reveal intent, masked block, generation guard and clearing; native PSK/reveal tests. Toolkit memory-copy limits documented above. |
+| PV-1–5, MT-2–5 | Config range coverage/overlap functions, path diagram, public snippet/copy/QR; native previews, QR round trip and shared config tests. Daemon enforces exclusivity on Connect. |
+| IE-1–6, SP-4 | File/drop/clipboard imports enter the editor, confirmed protected export, typed hook refusal, screen capture; parser, file, clipboard/image and native screen-QR assertions. |
+| NW-1 | Shared IPv4/IPv6 parsing and default endpoint port; form round trips preserve imported route/endpoint choices. |
+| LN-1–3 | Complete locale files and runtime locale discovery; EN/JA screenshots/key parity and native Japanese composition. OS IME picker remains a desktop acceptance check. |
+| SP-3, PF-1 | No network client or engine/platform GUI dependency; Tokio owns IPC only. |
+| PF-3 | Native harness emits RSS and screenshots; CI retains throughput, idle CPU and package size measurements. |
+
+Native keyboard assertions dispatch real Tab, Space and Enter events: Tab moves
+from the server key to the traffic switch, Space toggles it, and Tab/Enter from
+DNS opens Advanced. The existing Kit focus traversal and activation work without
+custom app keybindings. Network containment/recovery and installation have
+separate platform tests. Native Windows/macOS behavior remains unverified;
+GUI screenshots do not establish it.
+
+The pinned toolkit does not scroll a newly focused control into view: a native
+reproduction tabbed to an input at y=970 in a 400-pixel viewport. A shared small
+wrapper now reveals fields, buttons and tunnel rows on focus entry in the three
+scroll regions. It uses GPUI's existing focus/layout/scroll APIs, adds no dependency,
+and leaves manual scrolling alone while focus stays on the same control. Native
+acceptance tabs through Advanced to the PSK and DNS-domain fields and checks their
+actual bounds, then tabs to the preview copy button and activates it with Enter.
+A separate native reproduction verifies a visible control does not change the
+scroll offset; the acceptance suite verifies manual scrolling is preserved.
+Linux and Windows GNU strict all-target Clippy pass after the integration.

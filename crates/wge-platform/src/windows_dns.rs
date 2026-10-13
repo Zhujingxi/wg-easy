@@ -209,6 +209,34 @@ fn interface_rule(interface: u32) -> Result<String, Error> {
     ))
 }
 
+#[cfg(test)]
+pub(crate) fn smoke_matches(state: &State, applied: bool) -> Result<bool, Error> {
+    let State::Policy {
+        rule,
+        servers,
+        domains,
+    } = state
+    else {
+        return Ok(!applied);
+    };
+    let key = Key::open(&policy_path(rule)?)?;
+    if !applied {
+        return Ok(key.is_none());
+    }
+    let Some(key) = key else {
+        return Ok(false);
+    };
+    let servers = servers
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(";");
+    Ok(
+        key.read("Name")? == Some((REG_MULTI_SZ, encode_strings(domains, true)))
+            && key.read("GenericDNSServers")? == Some((REG_SZ, encode_strings(&[servers], false))),
+    )
+}
+
 fn policy_path(rule: &str) -> Result<String, Error> {
     let valid = rule.len() == 38
         && rule.bytes().enumerate().all(|(index, byte)| match index {

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<installer-gui-script minSpecVersion="2">
+<title>WireGuard Easy</title>
+<organization>io.github.zhujingxi</organization>
+<domains enable_localSystem="true" enable_currentUserHome="false" enable_anywhere="false"/>
+<options customize="never" require-scripts="false" rootVolumeOnly="true"/>
+<choices-outline><line choice="default"><line choice="app"/></line></choices-outline>
+<choice id="default"/>
+<choice id="app" visible="false"><pkg-ref id="io.github.zhujingxi.wireguardeasy"/></choice>
+<pkg-ref id="io.github.zhujingxi.wireguardeasy" version="0.1.0" onConclusion="RequireRestart">wireguardeasy-component.pkg</pkg-ref>
+</installer-gui-script>

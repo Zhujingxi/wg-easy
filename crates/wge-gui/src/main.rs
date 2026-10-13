@@ -7,6 +7,7 @@
 
 mod appearance;
 mod backend;
+mod focus_scroll;
 mod form;
 mod import;
 mod settings;
@@ -211,6 +212,15 @@ fn main() {
                                             ) => {
                                                 desktop.backend.send(
                                                     Request::Connect { id: tunnel.id },
+                                                    Intent::Action,
+                                                );
+                                            }
+                                            Event::Reply(
+                                                Intent::DeleteAfterDisconnect,
+                                                Response::Tunnel(tunnel),
+                                            ) => {
+                                                desktop.backend.send(
+                                                    Request::Delete { id: tunnel.id },
                                                     Intent::Action,
                                                 );
                                             }

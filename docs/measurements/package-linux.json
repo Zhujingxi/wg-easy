@@ -1,0 +1,9 @@
+{
+  "measured_date": "2026-10-13",
+  "profile": "release",
+  "source_revision": "f24cd917c89229cc98a9b7141823d6e220393adc",
+  "package": "wireguardeasy-desktop_0.1.0_amd64.deb",
+  "bytes": 13769138,
+  "sha256": "419a78f4bd6f64efb2469c7dff5360a842d51d0651aa00e87f150ab36c3e18b0",
+  "scope": "locally built Debian archive; contents and permissions inspected, package not installed"
+}

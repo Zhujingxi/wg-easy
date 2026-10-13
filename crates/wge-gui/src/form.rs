@@ -55,6 +55,16 @@ pub fn values(config: &PublicConfig, name: &str) -> Values {
 pub fn key(peer: usize, field: &str) -> String {
     format!("{peer}.{field}")
 }
+pub fn all_traffic_switch(config: &PublicConfig) -> bool {
+    config.peers.first().is_none_or(|peer| {
+        peer.allowed_ips.len() == 2
+            && peer
+                .allowed_ips
+                .iter()
+                .any(|r| r.to_string() == "0.0.0.0/0")
+            && peer.allowed_ips.iter().any(|r| r.to_string() == "::/0")
+    })
+}
 fn joined<T: ToString>(values: &[T]) -> String {
     values
         .iter()
@@ -116,9 +126,22 @@ pub fn build(
     config.peers.clear();
     let mut secrets = Vec::new();
     for index in 0..peers {
+        if index > 0
+            && ["public_key", "endpoint", "routes", "keepalive", "psk"]
+                .iter()
+                .all(|field| get(&key(index, field)).is_empty())
+        {
+            continue;
+        }
         let public_key = get(&key(index, "public_key")).parse();
         let endpoint_value = get(&key(index, "endpoint"));
-        let endpoint = if endpoint_value.is_empty() && index > 0 {
+        let endpoint = if endpoint_value.is_empty()
+            && (index > 0
+                || base
+                    .peers
+                    .first()
+                    .is_some_and(|peer| peer.endpoint.is_none()))
+        {
             None
         } else {
             match endpoint(endpoint_value) {
@@ -143,6 +166,14 @@ pub fn build(
             parse_number(get(&keepalive_key), &keepalive_key, 0, 65_535, &mut errors);
         match public_key {
             Ok(public_key) => {
+                if public_key == base.interface.public_key
+                    || config
+                        .peers
+                        .iter()
+                        .any(|peer| peer.public_key == public_key)
+                {
+                    errors.insert(key(index, "public_key"), "error_peer_key");
+                }
                 let psk = get(&key(index, "psk"));
                 let existing = base
                     .peers
@@ -238,6 +269,38 @@ mod tests {
         );
     }
     #[test]
+    fn imported_routes_and_peers_are_preserved() {
+        let prefix = "[Interface]\nPrivateKey = AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=\nAddress = 10.0.0.2/32\n[Peer]\nPublicKey = AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=\n";
+        for routes in ["0.0.0.0/0", "0.0.0.0/1, 128.0.0.0/1", "10.0.0.0/24"] {
+            let text = format!(
+                "{prefix}AllowedIPs = {routes}\n[Peer]\nPublicKey = AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=\nAllowedIPs = ::/0\n"
+            );
+            let public = wge_config::parse(&text).unwrap().public();
+            assert!(!all_traffic_switch(&public));
+            let fields = values(&public, "Imported");
+            let (roundtrip, _) = build(&public, &fields, 2, all_traffic_switch(&public)).unwrap();
+            assert_eq!(roundtrip, public);
+        }
+    }
+    #[test]
+    fn optional_blank_peer_is_ignored_but_partial_peer_is_validated() {
+        let text = "[Interface]\nPrivateKey = AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=\nAddress = 10.0.0.2/32\n[Peer]\nPublicKey = AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=\nEndpoint = vpn.example.com:51820\nAllowedIPs = 0.0.0.0/0, ::/0\n";
+        let public = wge_config::parse(text).unwrap().public();
+        let mut fields = values(&public, "Tunnel");
+        assert_eq!(build(&public, &fields, 2, true).unwrap().0, public);
+        fields.insert("1.endpoint".into(), "vpn.example.com".to_owned().into());
+        let errors = build(&public, &fields, 2, true).unwrap_err();
+        assert!(errors.contains_key("1.public_key"));
+        assert!(errors.contains_key("1.routes"));
+        fields.insert("1.routes".into(), "10.0.0.0/24".to_owned().into());
+        for public_key in [public.peers[0].public_key, public.interface.public_key] {
+            fields.insert("1.public_key".into(), public_key.to_string().into());
+            let errors = build(&public, &fields, 2, true).unwrap_err();
+            assert_eq!(errors.get("1.public_key"), Some(&"error_peer_key"));
+            assert!(!errors.contains_key("0.public_key"));
+        }
+    }
+    #[test]
     fn public_form_never_carries_keys_and_new_tunnel_needs_three_values() {
         let text = "[Interface]\nPrivateKey = AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=\nAddress = 10.0.0.2/32\n[Peer]\nPublicKey = AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=\nEndpoint = vpn.example.com:51820\nAllowedIPs = 0.0.0.0/0, ::/0\n";
         let public = wge_config::parse(text).unwrap().public();
@@ -250,5 +313,28 @@ mod tests {
         wrong.insert("addresses".into(), "mistake".to_owned().into());
         wrong.insert("0.public_key".into(), "mistake".to_owned().into());
         assert_eq!(build(&public, &wrong, 1, true).unwrap_err().len(), 2);
+
+        let mut draft = public;
+        draft.interface.addresses.clear();
+        draft.interface.dns = vec!["1.1.1.1".parse().unwrap()];
+        draft.peers.clear();
+        let mut fields = values(&draft, "Tunnel 1");
+        fields.insert("addresses".into(), "10.0.0.2/32".to_owned().into());
+        fields.insert("0.endpoint".into(), "vpn.example.com".to_owned().into());
+        fields.insert(
+            "0.public_key".into(),
+            "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="
+                .to_owned()
+                .into(),
+        );
+        let (config, _) = build(&draft, &fields, 1, all_traffic_switch(&draft)).unwrap();
+        assert_eq!(config.peers[0].endpoint.as_ref().unwrap().port, 51820);
+        assert_eq!(config.peers[0].allowed_ips.len(), 2);
+        fields.remove("0.endpoint");
+        assert!(
+            build(&draft, &fields, 1, true)
+                .unwrap_err()
+                .contains_key("0.endpoint")
+        );
     }
 }

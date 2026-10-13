@@ -1,0 +1,8 @@
+#!/bin/sh
+set -e
+if [ -d /run/systemd/system ]; then
+    case "$1" in
+        upgrade) systemctl stop wireguardeasy.service ;;
+        remove|deconfigure) systemctl disable --now wireguardeasy.service ;;
+    esac
+fi

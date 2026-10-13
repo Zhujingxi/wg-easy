@@ -24,6 +24,12 @@ table with native policy rules: marked WireGuard sockets use the physical main
 table, an unreachable guard prevents endpoint loops, and locally generated
 unmarked packets use the tunnel. This also captures more-specific LAN/DNS
 routes and respects strict reverse-path filtering on incoming encrypted UDP.
+An atomic native nftables inet filter checks final egress after routing/NAT:
+Linux can send directly on a socket-bound interface even when policy lookup
+returns unreachable. The filter permits the tunnel, loopback, marked WireGuard
+UDP and narrow DHCP/IPv6 link maintenance, and blocks other physical egress.
+Its table carries an ownership marker and is journaled before installation;
+normal stop and crash recovery remove it without touching other tables.
 
 Windows and macOS override existing physical ranges and contain later network
 changes with native filters, installed only while a full tunnel is active.
@@ -37,6 +43,8 @@ PF skip-interface rules are rejected. PF enable references are owned individuall
 journaled before acquisition and recovered using process identity and boot time.
 Other users' references and firewall rules are retained. This is active-tunnel
 containment, not a persistent kill switch; normal shutdown removes the filters.
+All three platforms preserve IPv6 multicast listener maintenance alongside
+neighbor discovery so multicast snooping does not silently break the uplink.
 
 DNS uses systemd-resolved per-link routing domains on Linux, an owned NRPT policy
 on Windows and supplemental SystemConfiguration resolvers on macOS. Full tunnels
@@ -66,13 +74,15 @@ at login/reboot are introduced.
 
 `route_manager` wraps native route APIs; `netconfig` wraps interface APIs; `libc`
 supplies missing native calls. Linux's netlink crates are already route_manager
-transitives and provide policy routing. `serde` and `serde_json` encode public
+transitives and provide policy routing and nftables without additional
+dependencies or command-line tools. `serde` and `serde_json` encode public
 recovery journals. `zbus` uses only its Tokio backend for systemd-resolved.
 `windows-sys` supplies DNS, pipe identity, WFP and atomic file APIs;
 `windows-service` supplies SCM registration/control. `system-configuration` and
 `core-foundation` supply macOS DNS. macOS-only `pfctl` 0.7.0 uses native ioctls,
 not the command-line program; its MIT/Apache source is vendored with two small
-public methods for first-anchor insertion and read-only existence checks.
+public methods for first-anchor insertion and read-only existence checks, plus
+standard IPv6 multicast listener type values for narrow link-maintenance rules.
 `x25519-dalek` supplies gotatun's key input type, and `zeroize` clears temporary
 PSK copies. `tempfile` and `socket2` are test-only helpers.
 
@@ -85,9 +95,15 @@ operations run in isolated user/network namespaces guarded against host use:
   preshared key, report handshakes and byte counters, and remove the interface
   and journal at disconnect.
 - Full-tunnel policy captures IPv4/IPv6 LAN DNS traffic despite physical routes,
-  bypasses the endpoint only for marked transport, and replays crash recovery.
+  bypasses the endpoint only for marked transport, blocks sockets explicitly
+  bound to the physical interface, and replays crash recovery. Physical packets
+  flow again after cleanup; foreign nftables tables survive ownership collisions.
 - Journal tests check version rejection, secret exclusion, private permissions
   and symlink rejection. DNS tests restore originals and preserve external edits.
+- The real systemd-resolved integration harness verifies split domains, IPv6
+  full-tunnel DNS, suppression of physical resolvers, normal restoration, crash
+  recovery and preservation of later DNS changes in private namespaces. See
+  `0008-resolved-verification.md` for the exact evidence and scope.
 - Native macOS arm64 and Windows GNU platform all-target checks and clippy pass;
   tests also assert that network state and errors remain Send + Sync.
 - The namespace harness measures payload throughput, idle CPU and RSS and can
@@ -98,7 +114,14 @@ operations run in isolated user/network namespaces guarded against host use:
 
 Native Windows WFP/NRPT/SCM and macOS PF/SystemConfiguration behavior still need
 privileged smoke tests on those operating systems; cross-compilation cannot
-establish runtime behavior. Vendored pfctl emits two upstream warnings in its
+establish runtime behavior. The opt-in `native_full_tunnel_smoke` test now covers
+real dual-stack tun packets, native DNS/filter application, normal cleanup and
+journal recovery, with a separate recovery watchdog. See
+`docs/native-network-smoke.md` for elevated disposable-VM commands and limits.
+PF token ownership now uses the kernel process name rather than assuming it
+matches the executable's basename. Windows service stop delivery uses a Tokio
+oneshot so a failed service startup cannot strand a blocking receiver thread.
+Vendored pfctl emits two upstream warnings in its
 unused NAT pool code; wg-easy uses only stateless filtering rules.
 
 ## Resolved checks and remaining limits

@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>WireGuard Easy · Third-party licenses</title>
+<style>body{font:16px/1.5 system-ui;max-width:60em;margin:3em auto;padding:0 2em}pre{white-space:pre-wrap}section{border-top:1px solid #ccc;margin-top:3em}</style>
+<h1>Third-party licenses</h1>
+<p>WireGuard Easy is MIT licensed. These are the notices for its Rust dependencies.
+Wintun is distributed unchanged with its separate WINTUN-LICENSE.txt on Windows.</p>
+<p>The corresponding source, including the locally modified MPL-2.0 gotatun engine,
+is available at the revision listed in SOURCE.txt. The modifications change key
+memory lifetime and redacted diagnostic formatting, not WireGuard cryptography.</p>
+{{#each licenses}}
+<section><h2>{{name}}</h2><ul>
+{{#each used_by}}
+<li>{{crate.name}} {{crate.version}} — <a href="{{crate.repository}}">source</a></li>
+{{/each}}
+</ul><pre>{{text}}</pre></section>
+{{/each}}
+</html>

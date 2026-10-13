@@ -1,0 +1,177 @@
+name: Packages
+on:
+  workflow_dispatch:
+    inputs:
+      hosted_platforms:
+        description: Also build and test Windows/macOS on GitHub-hosted runners
+        type: boolean
+        default: false
+  pull_request:
+    paths: ['packaging/**', '.github/workflows/package.yml', 'about.toml', 'Cargo.lock']
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+concurrency:
+  group: packages-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  package:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.hosted_platforms && '["linux", "windows", "macos"]' || '["linux"]') }}
+    runs-on: ${{ fromJSON(matrix.os == 'linux' && '["self-hosted", "linux", "x64", "wg-easy-ci"]' || matrix.os == 'windows' && '["windows-latest"]' || '["macos-latest"]') }}
+    container: ${{ matrix.os == 'linux' && 'public.ecr.aws/ubuntu/ubuntu:24.04' || '' }}
+    timeout-minutes: 60
+    steps:
+      - name: Prepare isolated Linux build environment
+        if: runner.os == 'Linux'
+        run: |
+          echo "WGE_WORKSPACE_OWNER=$(stat -c '%u:%g' "$GITHUB_WORKSPACE")" >> "$GITHUB_ENV"
+          sed -i -e 's|http://archive.ubuntu.com|http://mirrors.ustc.edu.cn|g' -e 's|http://security.ubuntu.com|http://mirrors.ustc.edu.cn|g' /etc/apt/sources.list.d/ubuntu.sources
+          apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=3 update
+          DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=3 install --no-install-recommends -y ca-certificates
+          sed -i 's|http://mirrors.ustc.edu.cn|https://mirrors.ustc.edu.cn|g' /etc/apt/sources.list.d/ubuntu.sources
+          DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=3 install --no-install-recommends -y git curl jq ca-certificates python3 python-is-python3 build-essential cmake clang pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libegl1-mesa-dev libgbm-dev libfontconfig1-dev libvulkan-dev libpipewire-0.3-dev libclang-dev libasound2-dev
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about@0.9.2
+      - name: Dependency licenses and corresponding source
+        shell: bash
+        run: |
+          cargo about generate packaging/licenses.hbs --locked --fail --output-file THIRD-PARTY-LICENSES.html
+          printf 'Corresponding source (including modified MPL-2.0 gotatun):\nhttps://github.com/Zhujingxi/wg-easy/tree/%s\n' "$GITHUB_SHA" > SOURCE.txt
+      - name: Build release
+        if: runner.os != 'macOS'
+        run: cargo build --workspace --release --locked
+      - name: Debian package
+        if: runner.os == 'Linux'
+        run: |
+          install -Dm755 target/release/wg-easy stage/usr/bin/wg-easy
+          install -Dm755 target/release/wg-easy-daemon stage/usr/libexec/wireguardeasy/wg-easy-daemon
+          install -Dm644 packaging/linux/wireguardeasy.service stage/usr/lib/systemd/system/wireguardeasy.service
+          install -Dm644 packaging/linux/wireguardeasy.desktop stage/usr/share/applications/wireguardeasy.desktop
+          install -Dm644 crates/wge-gui/assets/icon.svg stage/usr/share/icons/hicolor/scalable/apps/wireguardeasy.svg
+          install -Dm644 LICENSE stage/usr/share/doc/wireguardeasy-desktop/copyright
+          install -Dm644 THIRD-PARTY-LICENSES.html stage/usr/share/doc/wireguardeasy-desktop/THIRD-PARTY-LICENSES.html
+          install -Dm644 SOURCE.txt stage/usr/share/doc/wireguardeasy-desktop/SOURCE.txt
+          install -Dm644 crates/wge-gui/assets/LICENSE-LUCIDE stage/usr/share/doc/wireguardeasy-desktop/LICENSE-ICONS.txt
+          install -Dm644 packaging/linux/control.in stage/DEBIAN/control
+          install -m755 packaging/linux/postinst packaging/linux/prerm packaging/linux/postrm stage/DEBIAN/
+          mkdir -p dist
+          dpkg-deb --root-owner-group --build stage dist/wireguardeasy-desktop_0.1.0_amd64.deb
+          dpkg-deb --contents dist/*.deb
+      - name: Wintun runtime
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://www.wintun.net/builds/wintun-0.14.1.zip -OutFile wintun.zip
+          if ((Get-FileHash wintun.zip -Algorithm SHA256).Hash.ToLower() -ne '07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51') { throw 'Wintun checksum mismatch' }
+          Expand-Archive wintun.zip -DestinationPath driver
+          Copy-Item driver/wintun/LICENSE.txt driver/wintun/bin/amd64/WINTUN-LICENSE.txt
+      - name: Windows MSI
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add WixToolset.Util.wixext/5.0.2
+          New-Item -ItemType Directory -Force dist | Out-Null
+          wix build packaging/windows/installer.wxs -arch x64 -ext WixToolset.Util.wixext -d BuildDir=target/release -d DriverDir=driver/wintun/bin/amd64 -o dist/wireguardeasy-desktop_0.1.0_x64.msi
+      - name: Universal macOS application and Installer package
+        if: runner.os == 'macOS'
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          MACOSX_DEPLOYMENT_TARGET=13.0 cargo build --workspace --release --locked --target aarch64-apple-darwin
+          MACOSX_DEPLOYMENT_TARGET=13.0 cargo build --workspace --release --locked --target x86_64-apple-darwin
+          mkdir -p 'stage/Applications/WireGuard Easy.app/Contents/MacOS' stage/Library/PrivilegedHelperTools stage/Library/LaunchDaemons dist
+          lipo -create target/aarch64-apple-darwin/release/wg-easy target/x86_64-apple-darwin/release/wg-easy -output 'stage/Applications/WireGuard Easy.app/Contents/MacOS/wg-easy'
+          lipo -create target/aarch64-apple-darwin/release/wg-easy-daemon target/x86_64-apple-darwin/release/wg-easy-daemon -output stage/Library/PrivilegedHelperTools/io.github.zhujingxi.wireguardeasy
+          cp packaging/macos/Info.plist 'stage/Applications/WireGuard Easy.app/Contents/Info.plist'
+          cp LICENSE 'stage/Applications/WireGuard Easy.app/Contents/LICENSE.txt'
+          cp THIRD-PARTY-LICENSES.html SOURCE.txt 'stage/Applications/WireGuard Easy.app/Contents/'
+          mkdir -p 'stage/Applications/WireGuard Easy.app/Contents/Resources'
+          cp crates/wge-gui/assets/icon.icns 'stage/Applications/WireGuard Easy.app/Contents/Resources/'
+          cp crates/wge-gui/assets/LICENSE-LUCIDE 'stage/Applications/WireGuard Easy.app/Contents/LICENSE-ICONS.txt'
+          cp -R packaging/macos/en.lproj packaging/macos/ja.lproj 'stage/Applications/WireGuard Easy.app/Contents/Resources/'
+          cp packaging/macos/io.github.zhujingxi.wireguardeasy.plist stage/Library/LaunchDaemons/
+          chmod 755 stage/Library/PrivilegedHelperTools/io.github.zhujingxi.wireguardeasy
+          chmod 644 stage/Library/LaunchDaemons/*.plist
+          pkgbuild --root stage --ownership recommended --identifier io.github.zhujingxi.wireguardeasy --version 0.1.0 --install-location / wireguardeasy-component.pkg
+          productbuild --distribution packaging/macos/distribution.xml --package-path . dist/wireguardeasy-desktop_0.1.0_universal.pkg
+      - name: Package measurements and SHA256 checksums
+        shell: python
+        run: |
+          import hashlib,json,pathlib
+          files=[p for p in pathlib.Path('dist').iterdir() if p.suffix in ('.deb','.msi','.pkg')]
+          pathlib.Path('dist/SHA256SUMS').write_text(''.join(f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n' for p in files))
+          pathlib.Path('dist/package-measurements.json').write_text(json.dumps({p.name:{'bytes':p.stat().st_size} for p in files},indent=2))
+      - name: Native Windows full-tunnel DNS, filtering and recovery
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WGE_NATIVE_NETWORK_TEST: '1'
+        run: |
+          cargo test -p wge-platform --lib --no-run --locked
+          if ($LASTEXITCODE) { throw 'Platform test build failed' }
+          Copy-Item driver/wintun/bin/amd64/wintun.dll target/debug/deps/wintun.dll
+          cargo test -p wge-platform --lib native_smoke::native_full_tunnel_smoke --locked -- --ignored --nocapture --test-threads=1
+          if ($LASTEXITCODE) { throw 'Native full-tunnel test failed' }
+      - name: Native macOS full-tunnel DNS, filtering and recovery
+        if: runner.os == 'macOS'
+        run: |
+          cargo test -p wge-platform --lib --no-run --locked --message-format=json > /tmp/wge-native-test.json
+          test_binary="$(python3 -c 'import json; print(next(x["executable"] for line in open("/tmp/wge-native-test.json") if (x:=json.loads(line)).get("reason")=="compiler-artifact" and x.get("executable") and x["target"]["name"]=="wge_platform"))')"
+          sudo env WGE_NATIVE_NETWORK_TEST=1 "$test_binary" native_smoke::native_full_tunnel_smoke --ignored --nocapture --test-threads=1
+      - name: Install Windows service and verify lifecycle
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WGE_INSTALLED_SERVICE_TEST: '1'
+          WGE_SERVICE_SMOKE_STATE: ${{ runner.temp }}/wge-service-smoke.json
+        run: |
+          $msi = (Get-ChildItem dist/*.msi).FullName
+          $process = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @('/i', $msi, '/qn', '/norestart', '/l*v', "$env:RUNNER_TEMP/install.log")
+          if ($process.ExitCode -notin @(0,3010)) { Get-Content "$env:RUNNER_TEMP/install.log"; throw "Installer failed: $($process.ExitCode)" }
+          try {
+            cargo test -p wge-daemon --test installed_service installed_service_connect_and_leave_running --locked -- --ignored --exact --nocapture
+            if ($LASTEXITCODE) { throw 'Installed service connect test failed' }
+            Restart-Service wireguardeasy
+            cargo test -p wge-daemon --test installed_service installed_service_restart_is_off --locked -- --ignored --exact --nocapture
+            if ($LASTEXITCODE) { throw 'Installed service restart test failed' }
+          } finally {
+            if (Test-Path $env:WGE_SERVICE_SMOKE_STATE) {
+              Restart-Service wireguardeasy
+              cargo test -p wge-daemon --test installed_service installed_service_restart_is_off --locked -- --ignored --exact --nocapture
+            }
+            $process = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @('/x', $msi, '/qn', '/norestart')
+            if ($process.ExitCode -notin @(0,3010)) { throw "Uninstall failed: $($process.ExitCode)" }
+          }
+      - name: Install macOS service and verify lifecycle
+        if: runner.os == 'macOS'
+        env:
+          WGE_INSTALLED_SERVICE_TEST: '1'
+          WGE_SERVICE_SMOKE_STATE: ${{ runner.temp }}/wge-service-smoke.json
+        run: |
+          sudo installer -pkg dist/wireguardeasy-desktop_0.1.0_universal.pkg -target /
+          plist=/Library/LaunchDaemons/io.github.zhujingxi.wireguardeasy.plist
+          label=system/io.github.zhujingxi.wireguardeasy
+          # A runner cannot reboot mid-job; bootstrap the installed LaunchDaemon explicitly.
+          sudo launchctl bootstrap system "$plist"
+          trap 'sudo launchctl kickstart -k "$label"; if test -f "$WGE_SERVICE_SMOKE_STATE"; then cargo test -p wge-daemon --test installed_service installed_service_restart_is_off --locked -- --ignored --exact --nocapture; fi; sudo launchctl bootout system "$plist"' EXIT
+          cargo test -p wge-daemon --test installed_service installed_service_connect_and_leave_running --locked -- --ignored --exact --nocapture
+          sudo launchctl kickstart -k "$label"
+          cargo test -p wge-daemon --test installed_service installed_service_restart_is_off --locked -- --ignored --exact --nocapture
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: installer-${{ runner.os }}-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+      - name: Restore workspace ownership
+        if: runner.os == 'Linux' && always() && env.WGE_WORKSPACE_OWNER != ''
+        run: chown -hR "$WGE_WORKSPACE_OWNER" "$GITHUB_WORKSPACE"

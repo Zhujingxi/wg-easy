@@ -1,5 +1,6 @@
 use crate::{
     backend::{Backend, Command, Event, Intent},
+    focus_scroll::{FocusScroll, reveal},
     form,
     settings::Settings,
 };
@@ -13,7 +14,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::{prelude::*, *};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -120,11 +121,26 @@ struct Editor {
     all_traffic: bool,
     advanced: bool,
     submitted: bool,
+    touched: HashSet<EntityId>,
     revealed: Option<SensitiveText>,
     generation: u64,
     qr: Option<(String, Arc<Image>)>,
 }
 impl Editor {
+    fn psk_hint(&self, peer: usize, cx: &App) -> &'static str {
+        let public_key = self.fields[&form::key(peer, "public_key")].read(cx).value();
+        if self
+            .tunnel
+            .config
+            .peers
+            .iter()
+            .any(|peer| peer.has_preshared_key && peer.public_key.to_string() == public_key.trim())
+        {
+            "hint_psk_set"
+        } else {
+            "hint_psk"
+        }
+    }
     fn values(&self, cx: &App) -> form::Values {
         self.fields
             .iter()
@@ -154,6 +170,9 @@ pub struct MainView {
     offline: bool,
     busy: bool,
     focus: FocusHandle,
+    content_scroll: ScrollHandle,
+    editor_scroll: ScrollHandle,
+    preview_scroll: ScrollHandle,
 }
 impl MainView {
     pub fn new(
@@ -195,6 +214,9 @@ impl MainView {
             offline,
             busy: false,
             focus: cx.focus_handle(),
+            content_scroll: ScrollHandle::new(),
+            editor_scroll: ScrollHandle::new(),
+            preview_scroll: ScrollHandle::new(),
         }
     }
     fn input(
@@ -209,8 +231,11 @@ impl MainView {
             input.set_value(value, window, cx);
             input
         });
-        let sub = cx.subscribe_in(&input, window, |_, _, event, _, cx| {
+        let sub = cx.subscribe_in(&input, window, |this, input, event, _, cx| {
             if matches!(event, InputEvent::Change) {
+                if let Some(editor) = &mut this.editor {
+                    editor.touched.insert(input.entity_id());
+                }
                 cx.notify();
             }
         });
@@ -219,9 +244,12 @@ impl MainView {
     fn edit(&mut self, tunnel: Tunnel, window: &mut Window, cx: &mut Context<Self>) {
         self.clear_secrets(window, cx);
         self.clear_editor();
+        self.content_scroll.set_offset(Point::default());
+        self.editor_scroll.set_offset(Point::default());
+        self.preview_scroll.set_offset(Point::default());
         let generation = EDITOR_GENERATION.fetch_add(1, Ordering::Relaxed);
         let peers = tunnel.config.peers.len().max(1);
-        let all_traffic = tunnel.config.peers.is_empty() || tunnel.config.is_all_traffic();
+        let all_traffic = form::all_traffic_switch(&tunnel.config);
         let mut values = form::values(&tunnel.config, &tunnel.name);
         if tunnel.config.peers.is_empty() {
             for field in ["endpoint", "public_key", "routes", "keepalive", "psk"] {
@@ -244,6 +272,7 @@ impl MainView {
             all_traffic,
             advanced: false,
             submitted: false,
+            touched: HashSet::new(),
             revealed: None,
             generation,
             qr: None,
@@ -296,6 +325,9 @@ impl MainView {
             }
             Event::Reply(intent, response) => {
                 self.offline = false;
+                if matches!(intent, Intent::Action) && !matches!(response, Response::Error(_)) {
+                    self.notice = None;
+                }
                 if !matches!(intent, Intent::Refresh) {
                     self.busy = false;
                 }
@@ -311,6 +343,10 @@ impl MainView {
                             self.selected = Some(tunnel.id.clone());
                             self.editor = None;
                             self.send(Request::Connect { id: tunnel.id }, Intent::Action, cx);
+                        }
+                        Intent::DeleteAfterDisconnect => {
+                            self.selected = None;
+                            self.send(Request::Delete { id: tunnel.id }, Intent::Action, cx);
                         }
                         _ => {
                             if let Some(old) =
@@ -345,9 +381,7 @@ impl MainView {
                             tr(error_key(error.code))
                         });
                     }
-                    Response::Ok => {
-                        self.backend.send(Request::List, Intent::Refresh);
-                    }
+                    Response::Ok => {}
                 }
             }
             _ => {}
@@ -355,7 +389,28 @@ impl MainView {
         cx.notify();
     }
     fn start_edit(&mut self, id: TunnelId, cx: &mut Context<Self>) {
-        self.send(Request::Get { id }, Intent::Edit, cx);
+        let active = self
+            .snapshot
+            .tunnels
+            .iter()
+            .any(|t| t.id == id && t.status.state != ConnectionState::Off);
+        self.send(
+            if active {
+                Request::Disconnect { id }
+            } else {
+                Request::Get { id }
+            },
+            Intent::Edit,
+            cx,
+        );
+    }
+    fn delete(&mut self, id: TunnelId, cx: &mut Context<Self>) {
+        self.confirmation = None;
+        self.send(
+            Request::Disconnect { id },
+            Intent::DeleteAfterDisconnect,
+            cx,
+        );
     }
     fn save(&mut self, cx: &mut Context<Self>) {
         let Some(editor) = &mut self.editor else {
@@ -363,26 +418,37 @@ impl MainView {
         };
         editor.submitted = true;
         let values = editor.values(cx);
-        if let Ok((config, preshared_keys)) = form::build(
+        match form::build(
             &editor.tunnel.config,
             &values,
             editor.peers,
             editor.all_traffic,
         ) {
-            let request = Request::Save {
-                id: editor.tunnel.id.clone(),
-                name: values
-                    .get("name")
-                    .cloned()
-                    .unwrap_or_default()
-                    .trim()
-                    .to_owned(),
-                config,
-                preshared_keys,
-            };
-            self.send(request, Intent::SaveConnect, cx);
-        } else {
-            cx.notify();
+            Ok((config, preshared_keys)) => {
+                let request = Request::Save {
+                    id: editor.tunnel.id.clone(),
+                    name: values
+                        .get("name")
+                        .cloned()
+                        .unwrap_or_default()
+                        .trim()
+                        .to_owned(),
+                    config,
+                    preshared_keys,
+                };
+                self.send(request, Intent::SaveConnect, cx);
+            }
+            Err(errors) => {
+                if errors.keys().any(|key| {
+                    !matches!(
+                        key.as_str(),
+                        "name" | "addresses" | "dns" | "0.endpoint" | "0.public_key" | "0.routes"
+                    )
+                }) {
+                    editor.advanced = true;
+                }
+                cx.notify();
+            }
         }
     }
     fn add_peer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -401,6 +467,27 @@ impl MainView {
             editor.fields.insert(key, input);
             editor._subscriptions.push(sub);
         }
+        cx.notify();
+    }
+    fn remove_peer(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = &mut self.editor else {
+            return;
+        };
+        if index == 0 || index >= editor.peers {
+            return;
+        }
+        if let Some(input) = editor.fields.get(&form::key(index, "psk")) {
+            input.update(cx, |input, cx| input.set_value("", window, cx));
+        }
+        for field in ["endpoint", "public_key", "routes", "keepalive", "psk"] {
+            editor.fields.remove(&form::key(index, field));
+            for next in index + 1..editor.peers {
+                if let Some(input) = editor.fields.remove(&form::key(next, field)) {
+                    editor.fields.insert(form::key(next - 1, field), input);
+                }
+            }
+        }
+        editor.peers -= 1;
         cx.notify();
     }
     fn open_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -629,7 +716,7 @@ impl MainView {
                     ),
             )
     }
-    fn import_actions(&self, cx: &mut Context<Self>) -> Div {
+    fn import_actions(&self, cx: &mut Context<Self>) -> FocusScroll {
         div()
             .flex()
             .items_center()
@@ -665,6 +752,7 @@ impl MainView {
                     .disabled(self.busy)
                     .on_click(cx.listener(|this, _, window, cx| this.open_import(window, cx))),
             )
+            .map(|actions| reveal("focus-import-actions", actions, &self.content_scroll))
     }
     fn tunnel_list(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let tunnels: Vec<_> = self.snapshot.tunnels.iter().filter(|t| t.saved).collect();
@@ -691,7 +779,8 @@ impl MainView {
                     )
                     .child(heading(tr("empty_title")))
                     .child(small(tr("empty_hint")))
-                    .child(
+                    .child(reveal(
+                        "focus-first-tunnel",
                         Button::new("first-tunnel")
                             .primary()
                             .mt_3()
@@ -701,7 +790,8 @@ impl MainView {
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.send(Request::BeginDraft, Intent::Edit, cx)
                             })),
-                    )
+                        &self.content_scroll,
+                    ))
                     .child(small(tr("drop_hint"))),
             );
         } else {
@@ -710,7 +800,8 @@ impl MainView {
                 let id = tunnel.id.clone();
                 let toggle_id = id.clone();
                 let selected = self.selected.as_ref() == Some(&id);
-                rows = rows.child(
+                rows = rows.child(reveal(
+                    SharedString::from(format!("focus-row-{}", id.0)),
                     div()
                         .id(SharedString::from(format!("row-{}", id.0)))
                         .p_5()
@@ -773,7 +864,8 @@ impl MainView {
                                     );
                                 })),
                         ),
-                );
+                    &self.content_scroll,
+                ));
             }
             list = list.child(rows);
             if let Some(tunnel) = self
@@ -809,7 +901,8 @@ impl MainView {
                                 rust_i18n::t!("tunnel_count", count = count).into_owned(),
                             )),
                     )
-                    .child(
+                    .child(reveal(
+                        "focus-new-tunnel",
                         Button::new("new-tunnel")
                             .primary()
                             .icon(IconName::Plus)
@@ -818,7 +911,8 @@ impl MainView {
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.send(Request::BeginDraft, Intent::Edit, cx)
                             })),
-                    ),
+                        &self.content_scroll,
+                    )),
             )
             .child(self.import_actions(cx))
             .child(list)
@@ -858,16 +952,22 @@ impl MainView {
                     .justify_between()
                     .items_center()
                     .child(heading(tunnel.name.clone()))
-                    .child(
+                    .child(reveal(
+                        "focus-edit-tunnel",
                         Button::new("edit-tunnel")
                             .ghost()
-                            .label(tr("edit"))
+                            .label(tr(if tunnel.status.state != ConnectionState::Off {
+                                "disconnect_edit"
+                            } else {
+                                "edit"
+                            }))
                             .icon(IconName::Pencil)
-                            .disabled(self.busy)
+                            .disabled(self.busy || self.offline)
                             .on_click(
                                 cx.listener(move |this, _, _, cx| this.start_edit(id.clone(), cx)),
                             ),
-                    ),
+                        &self.content_scroll,
+                    )),
             )
             .child(
                 div()
@@ -911,7 +1011,8 @@ impl MainView {
                     .border_t_1()
                     .border_color(rgb(LINE))
                     .pt_4()
-                    .child(
+                    .child(reveal(
+                        "focus-export-tunnel",
                         Button::new("export-tunnel")
                             .disabled(self.busy || self.offline)
                             .ghost()
@@ -922,8 +1023,10 @@ impl MainView {
                                     Some(Confirm::Export(export_id.clone(), export_name.clone()));
                                 cx.notify();
                             })),
-                    )
-                    .child(
+                        &self.content_scroll,
+                    ))
+                    .child(reveal(
+                        "focus-delete-tunnel",
                         Button::new("delete-tunnel")
                             .disabled(self.busy || self.offline)
                             .ghost()
@@ -934,7 +1037,8 @@ impl MainView {
                                     Some(Confirm::Delete(delete_id.clone(), delete_name.clone()));
                                 cx.notify();
                             })),
-                    ),
+                        &self.content_scroll,
+                    )),
             )
             .into_any_element()
     }
@@ -945,10 +1049,12 @@ impl MainView {
         hint: &str,
         errors: &form::Errors,
         cx: &Context<Self>,
-    ) -> Div {
+    ) -> FocusScroll {
         let editor = self.editor.as_ref().unwrap();
         let input = &editor.fields[id];
-        let show_error = editor.submitted || !input.read(cx).value().is_empty();
+        let show_error = editor.submitted
+            || editor.touched.contains(&input.entity_id())
+            || !input.read(cx).value().is_empty();
         let error = errors.get(id).filter(|_| show_error);
         let view = cx.entity().downgrade();
         div()
@@ -979,6 +1085,15 @@ impl MainView {
                     .text_color(rgb(if error.is_some() { 0xa4483d } else { MUTED }))
                     .child(tr(error.copied().unwrap_or(hint))),
             )
+            .map(|field| {
+                reveal(
+                    SharedString::from(format!("field-{id}")),
+                    field,
+                    &self.editor_scroll,
+                )
+                .flex_1()
+                .min_w_0()
+            })
     }
     fn editor_form(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let editor = self.editor.as_ref().unwrap();
@@ -1032,7 +1147,8 @@ impl MainView {
                                         .items_center()
                                         .justify_between()
                                         .child(small(tr("your_public_key")))
-                                        .child(
+                                        .child(reveal(
+                                            "focus-copy-public",
                                             Button::new("copy-public")
                                                 .ghost()
                                                 .small()
@@ -1043,7 +1159,8 @@ impl MainView {
                                                         ClipboardItem::new_string(copy_key.clone()),
                                                     )
                                                 }),
-                                        ),
+                                            &self.editor_scroll,
+                                        )),
                                 )
                                 .child(div().text_xs().font_family("monospace").child(public_key))
                                 .child(
@@ -1106,7 +1223,8 @@ impl MainView {
                                                 .child(tr("hint_all_traffic")),
                                         ),
                                 )
-                                .child(
+                                .child(reveal(
+                                    "focus-all-traffic",
                                     Switch::new("all-traffic")
                                         .disabled(self.busy)
                                         .checked(editor.all_traffic)
@@ -1117,7 +1235,8 @@ impl MainView {
                                             }
                                             cx.notify();
                                         })),
-                                ),
+                                    &self.editor_scroll,
+                                )),
                         )
                         .child(
                             div()
@@ -1137,7 +1256,8 @@ impl MainView {
                 ),
             );
         let advanced = editor.advanced;
-        fields = fields.child(
+        fields = fields.child(reveal(
+            "focus-advanced",
             Button::new("advanced")
                 .ghost()
                 .icon(if advanced {
@@ -1153,7 +1273,8 @@ impl MainView {
                     }
                     cx.notify();
                 })),
-        );
+            &self.editor_scroll,
+        ));
         if advanced {
             let revealed = editor.revealed.is_some();
             let reveal_id = id.clone();
@@ -1162,25 +1283,13 @@ impl MainView {
                 .flex()
                 .flex_col()
                 .gap_5()
-                .child(
-                    self.field(
-                        "0.psk",
-                        "preshared_key",
-                        if editor
-                            .tunnel
-                            .config
-                            .peers
-                            .first()
-                            .is_some_and(|p| p.has_preshared_key)
-                        {
-                            "hint_psk_set"
-                        } else {
-                            "hint_psk"
-                        },
-                        &errors,
-                        cx,
-                    ),
-                )
+                .child(self.field(
+                    "0.psk",
+                    "preshared_key",
+                    editor.psk_hint(0, cx),
+                    &errors,
+                    cx,
+                ))
                 .child(
                     div()
                         .flex()
@@ -1228,7 +1337,8 @@ impl MainView {
                                                 }),
                                         ),
                                 )
-                                .child(
+                                .child(reveal(
+                                    "focus-show-private",
                                     Button::new("show-private")
                                         .ghost()
                                         .small()
@@ -1249,12 +1359,13 @@ impl MainView {
                                                 cx,
                                             );
                                         })),
-                                ),
+                                    &self.editor_scroll,
+                                )),
                         )
                         .child(small(tr("hint_private_key"))),
                 );
             for index in 1..editor.peers {
-                let mut peer = div()
+                let peer = div()
                     .flex()
                     .flex_col()
                     .gap_4()
@@ -1290,7 +1401,7 @@ impl MainView {
                     .child(self.field(
                         &form::key(index, "psk"),
                         "preshared_key",
-                        "hint_psk",
+                        editor.psk_hint(index, cx),
                         &errors,
                         cx,
                     ))
@@ -1300,42 +1411,32 @@ impl MainView {
                         "hint_keepalive",
                         &errors,
                         cx,
-                    ));
-                if index == editor.peers - 1 {
-                    peer = peer.child(
+                    ))
+                    .child(reveal(
+                        SharedString::from(format!("focus-remove-peer-{index}")),
                         Button::new(SharedString::from(format!("remove-peer-{index}")))
                             .ghost()
                             .small()
                             .label(tr("remove_peer"))
                             .disabled(self.busy)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                if let Some(editor) = &mut this.editor {
-                                    editor.peers -= 1;
-                                    if let Some(input) =
-                                        editor.fields.get(&form::key(editor.peers, "psk"))
-                                    {
-                                        input.update(cx, |input, cx| {
-                                            input.set_value("", window, cx)
-                                        });
-                                    }
-                                    let prefix = format!("{}.", editor.peers);
-                                    editor.fields.retain(|k, _| !k.starts_with(&prefix));
-                                }
-                                cx.notify();
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.remove_peer(index, window, cx)
                             })),
-                    );
-                }
+                        &self.editor_scroll,
+                    ));
                 advanced = advanced.child(peer);
             }
             fields = fields.child(
-                advanced.child(
+                advanced.child(reveal(
+                    "focus-add-peer",
                     Button::new("add-peer")
                         .outline()
                         .icon(IconName::Plus)
                         .label(tr("add_peer"))
                         .disabled(self.busy)
                         .on_click(cx.listener(|this, _, window, cx| this.add_peer(window, cx))),
-                ),
+                    &self.editor_scroll,
+                )),
             );
         }
         let preview = self.preview(&values, cx);
@@ -1391,7 +1492,9 @@ impl MainView {
                             .min_w_0()
                             .h_full()
                             .child(fields)
-                            .overflow_y_scrollbar(),
+                            .overflow_y_scroll()
+                            .track_scroll(&self.editor_scroll)
+                            .vertical_scrollbar(&self.editor_scroll),
                     )
                     .child(
                         div()
@@ -1400,7 +1503,9 @@ impl MainView {
                             .flex_shrink_0()
                             .h_full()
                             .child(preview)
-                            .overflow_y_scrollbar(),
+                            .overflow_y_scroll()
+                            .track_scroll(&self.preview_scroll)
+                            .vertical_scrollbar(&self.preview_scroll),
                     ),
             )
             .child(
@@ -1561,12 +1666,10 @@ impl MainView {
             }
         }
         if ranges.iter().any(|r| {
-            r.prefix() != 0
-                && self
-                    .snapshot
-                    .local_networks
-                    .iter()
-                    .any(|local| wge_config::overlaps(r, local))
+            self.snapshot
+                .local_networks
+                .iter()
+                .any(|local| wge_config::overlaps(r, local))
         }) {
             preview = preview.child(warning(rust_i18n::t!("overlap_local").into_owned()));
         }
@@ -1584,7 +1687,8 @@ impl MainView {
                             .font_weight(FontWeight::MEDIUM)
                             .child(tr("server_snippet")),
                     )
-                    .child(
+                    .child(reveal(
+                        "focus-copy-snippet",
                         Button::new("copy-snippet")
                             .ghost()
                             .small()
@@ -1595,7 +1699,8 @@ impl MainView {
                                     copy_snippet.clone(),
                                 ))
                             }),
-                    ),
+                        &self.preview_scroll,
+                    )),
             )
             .child(small(tr("snippet_hint")))
             .child(
@@ -1623,7 +1728,8 @@ impl MainView {
         let mut languages = div().flex().gap_3();
         for locale in rust_i18n::available_locales!() {
             let selected = *locale == *rust_i18n::locale();
-            languages = languages.child(
+            languages = languages.child(reveal(
+                SharedString::from(format!("focus-language-{locale}")),
                 Button::new(SharedString::from(format!("language-{locale}")))
                     .when(selected, |b| b.primary())
                     .label(rust_i18n::t!("language_name", locale = locale).into_owned())
@@ -1636,7 +1742,8 @@ impl MainView {
                         }
                         cx.notify();
                     })),
-            );
+                &self.content_scroll,
+            ));
         }
         div()
             .flex()
@@ -1671,7 +1778,8 @@ impl MainView {
                             .child(heading(tr("start_at_login")))
                             .child(small(tr("login_hint"))),
                     )
-                    .child(
+                    .child(reveal(
+                        "focus-start-at-login",
                         Switch::new("start-at-login")
                             .checked(self.settings.start_at_login)
                             .accessibility_label(tr("start_at_login"))
@@ -1681,7 +1789,8 @@ impl MainView {
                                 }
                                 cx.notify();
                             })),
-                    ),
+                        &self.content_scroll,
+                    )),
             )
             .child(
                 panel()
@@ -1691,12 +1800,14 @@ impl MainView {
                     .child(heading(tr("about")))
                     .child(small(tr("about_hint")))
                     .child(small(tr("no_accounts")))
-                    .child(
+                    .child(reveal(
+                        "focus-quit",
                         Button::new("quit")
                             .outline()
                             .label(tr("quit_app"))
                             .on_click(|_, _, cx| cx.quit()),
-                    ),
+                        &self.content_scroll,
+                    )),
             )
             .into_any_element()
     }
@@ -1754,17 +1865,14 @@ impl MainView {
                                     if export {
                                         this.export(id.clone(), name.clone(), window, cx);
                                     } else {
-                                        this.confirmation = None;
-                                        this.selected = None;
-                                        this.send(
-                                            Request::Delete { id: id.clone() },
-                                            Intent::Action,
-                                            cx,
-                                        );
+                                        this.delete(id.clone(), cx);
                                     }
                                 })),
                         ),
                 )
+                .map(|confirmation| {
+                    reveal("focus-confirmation", confirmation, &self.content_scroll)
+                })
                 .into_any_element(),
         )
     }
@@ -1826,6 +1934,7 @@ impl Render for MainView {
                     .h_full()
                     .when(editing, |d| d.overflow_hidden())
                     .when(!editing, |d| d.overflow_y_scroll())
+                    .track_scroll(&self.content_scroll)
                     .p_6()
                     .child(
                         div()
@@ -1896,6 +2005,169 @@ fn error_key(code: ErrorCode) -> &'static str {
 
 #[cfg(test)]
 impl MainView {
+    #[allow(dead_code)]
+    pub fn field_focus(&self, field: &str, cx: &App) -> FocusHandle {
+        self.editor.as_ref().unwrap().fields[field]
+            .read(cx)
+            .focus_handle(cx)
+    }
+    #[allow(dead_code)]
+    pub fn editor_modes(&self) -> (bool, bool) {
+        let editor = self.editor.as_ref().unwrap();
+        (editor.all_traffic, editor.advanced)
+    }
+    #[allow(dead_code)]
+    pub fn assert_visible_field(&self, field: &str, window: &Window, cx: &App) {
+        let input = self.editor.as_ref().unwrap().fields[field].read(cx);
+        assert!(input.focus_handle(cx).is_focused(window));
+        let bounds = input.input_bounds();
+        let viewport = self.editor_scroll.bounds();
+        assert!(
+            bounds.top() >= viewport.top() && bounds.bottom() <= viewport.bottom(),
+            "{field}: {bounds:?} outside {viewport:?}"
+        );
+    }
+    #[allow(dead_code)]
+    pub fn assert_preview_scrolled(&self) {
+        assert!(self.preview_scroll.offset().y < px(0.));
+    }
+    #[allow(dead_code)]
+    pub fn reset_editor_scroll(&self, window: &mut Window) {
+        self.editor_scroll.set_offset(Point::default());
+        window.refresh();
+    }
+    #[allow(dead_code)]
+    pub fn assert_editor_at_top(&self) {
+        assert_eq!(self.editor_scroll.offset(), Point::default());
+    }
+    #[allow(dead_code)]
+    pub fn check_service_actions(
+        &mut self,
+        commands: &mut tokio::sync::mpsc::UnboundedReceiver<Command>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut tunnel = self.editor.as_ref().unwrap().tunnel.clone();
+        let id = tunnel.id.clone();
+        self.clear_editor();
+        self.start_edit(id.clone(), cx);
+        assert!(
+            matches!(commands.try_recv(), Ok(Command::Request(Request::Disconnect { id: actual }, Intent::Edit)) if actual == id)
+        );
+        self.event(
+            Event::Reply(
+                Intent::Edit,
+                Response::Error(wge_ipc::ApiError::new(ErrorCode::Recovery, "fixture")),
+            ),
+            window,
+            cx,
+        );
+        assert!(self.editor.is_none());
+        assert!(commands.try_recv().is_err());
+        self.start_edit(id.clone(), cx);
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::Request(Request::Disconnect { .. }, Intent::Edit))
+        ));
+        tunnel.status = wge_ipc::TunnelStatus::default();
+        self.event(
+            Event::Reply(Intent::Edit, Response::Tunnel(tunnel.clone())),
+            window,
+            cx,
+        );
+        self.editor.as_ref().unwrap().fields["name"].update(cx, |input, cx| {
+            input.set_value("Renamed tunnel", window, cx)
+        });
+        self.save(cx);
+        assert!(
+            matches!(commands.try_recv(), Ok(Command::Request(Request::Save { name, .. }, Intent::SaveConnect)) if name == "Renamed tunnel")
+        );
+        tunnel.name = "Renamed tunnel".into();
+        self.event(
+            Event::Reply(Intent::SaveConnect, Response::Tunnel(tunnel.clone())),
+            window,
+            cx,
+        );
+        assert!(self.editor.is_none());
+        assert!(
+            matches!(commands.try_recv(), Ok(Command::Request(Request::Connect { id: actual }, Intent::Action)) if actual == id)
+        );
+        self.event(
+            Event::Reply(
+                Intent::Action,
+                Response::Error(wge_ipc::ApiError::new(ErrorCode::Endpoint, "fixture")),
+            ),
+            window,
+            cx,
+        );
+        assert_eq!(self.notice, Some(tr("api_endpoint")));
+        self.event(
+            Event::Reply(Intent::Action, Response::Tunnel(tunnel.clone())),
+            window,
+            cx,
+        );
+        assert!(self.notice.is_none());
+        self.delete(id.clone(), cx);
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::Request(
+                Request::Disconnect { .. },
+                Intent::DeleteAfterDisconnect
+            ))
+        ));
+        self.event(
+            Event::Reply(
+                Intent::DeleteAfterDisconnect,
+                Response::Error(wge_ipc::ApiError::new(ErrorCode::Recovery, "fixture")),
+            ),
+            window,
+            cx,
+        );
+        assert!(commands.try_recv().is_err());
+        assert_eq!(self.notice, Some(tr("api_recovery")));
+        self.delete(id.clone(), cx);
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::Request(
+                Request::Disconnect { .. },
+                Intent::DeleteAfterDisconnect
+            ))
+        ));
+        self.event(
+            Event::Reply(
+                Intent::DeleteAfterDisconnect,
+                Response::Tunnel(tunnel.clone()),
+            ),
+            window,
+            cx,
+        );
+        assert!(
+            matches!(commands.try_recv(), Ok(Command::Request(Request::Delete { id: actual }, Intent::Action)) if actual == id)
+        );
+        self.event(Event::Reply(Intent::Action, Response::Ok), window, cx);
+        self.edit(tunnel, window, cx);
+
+        self.add_peer(window, cx);
+        self.add_peer(window, cx);
+        let last = self.editor.as_ref().unwrap().fields["2.public_key"].clone();
+        last.update(cx, |input, cx| {
+            input.set_value("AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=", window, cx)
+        });
+        let removed_psk = self.editor.as_ref().unwrap().fields["1.psk"].clone();
+        removed_psk.update(cx, |input, cx| {
+            input.set_value("private fixture", window, cx)
+        });
+        self.remove_peer(1, window, cx);
+        let editor = self.editor.as_ref().unwrap();
+        assert_eq!(editor.peers, 2);
+        assert_eq!(editor.fields["1.public_key"], last);
+        assert_eq!(removed_psk.read(cx).text().len(), 0);
+        assert!(!editor.fields.contains_key("2.public_key"));
+        self.save(cx);
+        assert!(commands.try_recv().is_err());
+        assert!(self.editor.as_ref().unwrap().advanced);
+        self.remove_peer(1, window, cx);
+    }
     #[allow(dead_code)]
     pub fn check_preshared_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let key = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=";

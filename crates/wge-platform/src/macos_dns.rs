@@ -242,6 +242,22 @@ fn decode(value: &[u8]) -> Result<CFPropertyList, Error> {
 }
 
 #[cfg(test)]
+pub(crate) fn smoke_matches(state: &State, applied: bool) -> Result<bool, Error> {
+    let store = store()?;
+    for change in &state.changes {
+        let expected = if applied {
+            Some(decode(&change.installed)?)
+        } else {
+            change.original.as_deref().map(decode).transpose()?
+        };
+        if store.get(change.key.as_str()) != expected {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

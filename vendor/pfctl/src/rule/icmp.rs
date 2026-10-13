@@ -57,6 +57,12 @@ pub enum IcmpTimexCode {
 #[non_exhaustive]
 #[repr(u8)]
 pub enum Icmp6Type {
+    /// Multicast listener query.
+    ListenerQuery = 130,
+    /// Multicast listener report (version 1).
+    ListenerReport = 131,
+    /// Multicast listener done.
+    ListenerDone = 132,
     /// Router solicitation.
     RouterSol = 133,
     /// Router advertisement.
@@ -67,6 +73,8 @@ pub enum Icmp6Type {
     NeighbrAdv = 136,
     /// Shorter route exists
     Redir = 137,
+    /// Multicast listener report (version 2).
+    ListenerReportV2 = 143,
 }
 
 impl IcmpType {
@@ -90,6 +98,7 @@ impl IcmpType {
         match self {
             Unreach(unreach_code) => Some(*unreach_code as u8),
             Timex(timex_code) => Some(*timex_code as u8),
+            Icmp6(_) => Some(0),
             _ => None,
         }
     }

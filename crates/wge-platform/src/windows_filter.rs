@@ -214,11 +214,38 @@ fn control_traffic(engine: HANDLE, sublayer: GUID) -> Result<(), Error> {
             )?;
         }
     }
+    let mut multicast = FWP_V6_ADDR_AND_MASK {
+        addr: [0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        prefixLength: 16,
+    };
+    for kind in [131, 132, 143] {
+        let mut conditions = [
+            protocol(58),
+            port_condition(FWPM_CONDITION_IP_LOCAL_PORT, kind),
+            port_condition(FWPM_CONDITION_IP_REMOTE_PORT, 0),
+            condition(
+                FWPM_CONDITION_IP_REMOTE_ADDRESS,
+                FWP_V6_ADDR_MASK,
+                FWP_CONDITION_VALUE0_0 {
+                    v6AddrMask: &mut multicast,
+                },
+            ),
+        ];
+        add(
+            engine,
+            sublayer,
+            FWPM_LAYER_ALE_AUTH_CONNECT_V6,
+            "wg-easy IPv6 multicast listener report",
+            100,
+            FWP_ACTION_PERMIT,
+            &mut conditions,
+        )?;
+    }
     let mut link_local = FWP_V6_ADDR_AND_MASK {
         addr: [0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         prefixLength: 10,
     };
-    for kind in [134, 137] {
+    for kind in [130, 134, 137] {
         let mut conditions = [
             protocol(58),
             port_condition(FWPM_CONDITION_IP_LOCAL_PORT, kind),
@@ -235,7 +262,7 @@ fn control_traffic(engine: HANDLE, sublayer: GUID) -> Result<(), Error> {
             engine,
             sublayer,
             FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V6,
-            "wg-easy IPv6 router discovery",
+            "wg-easy IPv6 link control",
             100,
             FWP_ACTION_PERMIT,
             &mut conditions,

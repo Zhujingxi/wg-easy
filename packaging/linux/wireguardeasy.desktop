@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=WireGuard Easy
+Name[ja]=WireGuard Easy
+Comment=Connect this computer to your WireGuard tunnels
+Comment[ja]=このコンピューターをWireGuardトンネルに接続します
+Exec=wg-easy
+Icon=wireguardeasy
+Terminal=false
+Categories=Network;Security;
+StartupNotify=true
+StartupWMClass=wg-easy

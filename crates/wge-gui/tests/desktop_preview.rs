@@ -5,6 +5,8 @@
 mod appearance;
 #[path = "../src/backend.rs"]
 mod backend;
+#[path = "../src/focus_scroll.rs"]
+mod focus_scroll;
 #[path = "../src/form.rs"]
 mod form;
 #[path = "../src/import.rs"]
@@ -102,6 +104,19 @@ impl Render for QrScan {
     }
 }
 
+fn key(stroke: &str, window: &mut Window, cx: &mut App) {
+    let keystroke = Keystroke::parse(stroke).unwrap();
+    window.dispatch_event(
+        PlatformInput::KeyDown(KeyDownEvent {
+            keystroke: keystroke.clone(),
+            is_held: false,
+            prefer_character_input: false,
+        }),
+        cx,
+    );
+    window.dispatch_event(PlatformInput::KeyUp(KeyUpEvent { keystroke }), cx);
+}
+
 fn main() {
     let Some(directory) = std::env::var_os("WGE_PREVIEW_DIR").map(PathBuf::from) else {
         return;
@@ -193,9 +208,44 @@ fn main() {
                     .unwrap();
                 cx.background_executor().timer(Duration::from_secs(2)).await;
                 screenshot(&directory, "02-editor.png");
+                window.update(cx, |_, window, cx| {
+                        view.read(cx).field_focus("0.public_key", cx).focus(window, cx);
+                    key("tab", window, cx);
+                    key("space", window, cx);
+                    assert_eq!(view.read(cx).editor_modes(), (true, false));
+                    key("space", window, cx);
+                        view.read(cx).field_focus("dns", cx).focus(window, cx);
+                    key("tab", window, cx);
+                    key("enter", window, cx);
+                    assert_eq!(view.read(cx).editor_modes(), (false, true));
+                }).unwrap();
+                cx.background_executor().timer(Duration::from_millis(200)).await;
+                window.update(cx, |_, window, cx| key("tab", window, cx)).unwrap();
+                cx.background_executor().timer(Duration::from_millis(200)).await;
+                window.update(cx, |_, window, cx| view.read(cx).assert_visible_field("0.psk", window, cx)).unwrap();
+                for _ in 0..4 {
+                    window.update(cx, |_, window, cx| key("tab", window, cx)).unwrap();
+                    cx.background_executor().timer(Duration::from_millis(100)).await;
+                }
+                window.update(cx, |_, window, cx| view.read(cx).assert_visible_field("domains", window, cx)).unwrap();
+                window.update(cx, |_, window, cx| view.read(cx).reset_editor_scroll(window)).unwrap();
+                cx.background_executor().timer(Duration::from_millis(200)).await;
+                cx.update(|cx| view.read(cx).assert_editor_at_top());
+                for _ in 0..3 {
+                    window.update(cx, |_, window, cx| key("tab", window, cx)).unwrap();
+                    cx.background_executor().timer(Duration::from_millis(100)).await;
+                }
+                window.update(cx, |_, window, cx| {
+                    view.read(cx).assert_preview_scrolled();
+                    let previous = cx.read_from_clipboard();
+                    key("enter", window, cx);
+                    assert!(cx.read_from_clipboard().and_then(|item| item.text()).is_some_and(|text| text.starts_with("[Peer]")));
+                    cx.write_to_clipboard(previous.unwrap_or_else(|| ClipboardItem::new_string(String::new())));
+                }).unwrap();
                 window
                     .update(cx, |_, window, cx| {
                         view.update(cx, |view, cx| {
+                            view.check_service_actions(&mut receiver, window, cx);
                             view.check_preshared_input(window, cx);
                             view.check_clipboard_imports(&mut receiver, CONFIG, cx);
                             view.check_stale_reveal(window, cx);
@@ -227,7 +277,7 @@ fn main() {
                 cx.background_executor().timer(Duration::from_secs(2)).await;
                 assert!(import::screen().is_ok_and(|text| text.expose() == CONFIG));
                 qr_window.update(cx, |_, window, _| window.remove_window()).unwrap();
-                println!("Native desktop checks passed: English/Japanese, clipboard text/image, screen QR, IME composition, and stale reveal rejection.");
+                println!("Native desktop checks passed: English/Japanese, keyboard navigation, edit/save/connect/delete handlers, peer removal, clipboard text/image, screen QR, IME composition, and stale reveal rejection.");
                 cx.update(|cx| cx.quit());
             })
             .detach();

@@ -1,0 +1,53 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Package Name="WireGuard Easy" Manufacturer="wg-easy contributors" Version="0.1.0" UpgradeCode="B97F72B2-6257-4528-82CF-9C7CF857A5AC" Scope="perMachine" InstallerVersion="500">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of WireGuard Easy is already installed."/>
+    <MediaTemplate EmbedCab="yes"/>
+    <Icon Id="AppIcon" SourceFile="crates/wge-gui/assets/icon.ico"/>
+    <Property Id="ARPPRODUCTICON" Value="AppIcon"/>
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="WireGuard Easy">
+        <Component Id="DesktopApp" Guid="*">
+          <File Id="AppExe" Source="$(var.BuildDir)\wg-easy.exe" KeyPath="yes"/>
+        </Component>
+        <Component Id="TunnelService" Guid="*">
+          <File Id="DaemonExe" Source="$(var.BuildDir)\wg-easy-daemon.exe" KeyPath="yes"/>
+          <ServiceInstall Id="InstallService" Name="wireguardeasy" DisplayName="WireGuard Easy" Description="Owns WireGuard tunnels, keys, routes and DNS." Type="ownProcess" Start="auto" ErrorControl="normal" Account="LocalSystem"/>
+          <util:ServiceConfig ServiceName="wireguardeasy" FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart" RestartServiceDelayInSeconds="2" ResetPeriodInDays="1"/>
+          <ServiceControl Id="ControlService" Name="wireguardeasy" Start="install" Stop="both" Remove="uninstall" Wait="yes"/>
+        </Component>
+        <Component Id="WintunRuntime" Guid="*">
+          <File Source="$(var.DriverDir)\wintun.dll" KeyPath="yes"/>
+          <File Source="$(var.DriverDir)\WINTUN-LICENSE.txt"/>
+        </Component>
+        <Component Id="License" Guid="*">
+          <File Source="LICENSE" Name="LICENSE.txt" KeyPath="yes"/>
+          <File Source="THIRD-PARTY-LICENSES.html"/>
+          <File Source="SOURCE.txt"/>
+          <File Source="crates/wge-gui/assets/LICENSE-LUCIDE" Name="LICENSE-ICONS.txt"/>
+        </Component>
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="PrivateState" Name="WireguardEasy">
+        <Component Id="SecureStorage" Guid="*" Permanent="yes">
+          <CreateFolder>
+            <PermissionEx Sddl="D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"/>
+          </CreateFolder>
+        </Component>
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="MenuFolder" Name="WireGuard Easy">
+        <Component Id="StartMenuShortcut" Guid="*">
+          <Shortcut Id="AppShortcut" Name="WireGuard Easy" Target="[#AppExe]" WorkingDirectory="INSTALLFOLDER" Icon="AppIcon"/>
+          <RemoveFolder Id="RemoveMenuFolder" On="uninstall"/>
+          <RegistryValue Root="HKLM" Key="Software\WireguardEasy" Name="Installed" Type="integer" Value="1" KeyPath="yes"/>
+        </Component>
+      </Directory>
+    </StandardDirectory>
+    <Feature Id="Complete" Title="WireGuard Easy">
+      <ComponentRef Id="DesktopApp"/><ComponentRef Id="TunnelService"/><ComponentRef Id="WintunRuntime"/>
+      <ComponentRef Id="License"/><ComponentRef Id="SecureStorage"/><ComponentRef Id="StartMenuShortcut"/>
+    </Feature>
+  </Package>
+</Wix>

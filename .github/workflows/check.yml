@@ -1,0 +1,123 @@
+name: Check
+on:
+  push:
+    branches: [main, 'feat/**']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      hosted_platforms:
+        description: Also run Windows and macOS on GitHub-hosted runners
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: check-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  workspace:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.hosted_platforms && '["linux", "windows", "macos"]' || '["linux"]') }}
+    runs-on: ${{ fromJSON(matrix.os == 'linux' && '["self-hosted", "linux", "x64", "wg-easy-ci"]' || matrix.os == 'windows' && '["windows-latest"]' || '["macos-latest"]') }}
+    container: ${{ matrix.os == 'linux' && 'public.ecr.aws/ubuntu/ubuntu:24.04' || '' }}
+    timeout-minutes: 60
+    steps:
+      - name: Prepare isolated Linux build environment
+        if: runner.os == 'Linux'
+        run: |
+          echo "WGE_WORKSPACE_OWNER=$(stat -c '%u:%g' "$GITHUB_WORKSPACE")" >> "$GITHUB_ENV"
+          sed -i -e 's|http://archive.ubuntu.com|http://mirrors.ustc.edu.cn|g' -e 's|http://security.ubuntu.com|http://mirrors.ustc.edu.cn|g' /etc/apt/sources.list.d/ubuntu.sources
+          apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=3 update
+          DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=3 install --no-install-recommends -y ca-certificates
+          sed -i 's|http://mirrors.ustc.edu.cn|https://mirrors.ustc.edu.cn|g' /etc/apt/sources.list.d/ubuntu.sources
+          DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=3 install --no-install-recommends -y git curl ca-certificates build-essential cmake clang pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libegl1-mesa-dev libgbm-dev libfontconfig1-dev libvulkan-dev libpipewire-0.3-dev libclang-dev libasound2-dev xvfb xauth mesa-vulkan-drivers fonts-noto-cjk
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo check --workspace --locked
+      - run: cargo test --workspace --locked
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo build --workspace --locked
+      - name: Native desktop acceptance with software Vulkan
+        shell: bash
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p measurements/gui
+          export WGE_PREVIEW_DIR="$PWD/measurements/gui"
+          export WGE_PREVIEW_HEADLESS=1
+          export VK_DRIVER_FILES="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
+          test -n "$VK_DRIVER_FILES"
+          export LIBGL_ALWAYS_SOFTWARE=1
+          xvfb-run -a -s '-screen 0 1280x900x24' cargo test -p wge-gui --test desktop-preview --locked 2>&1 | tee measurements/gui/acceptance.log
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux' && always()
+        with:
+          name: desktop-acceptance-${{ github.sha }}
+          path: measurements/gui/
+          if-no-files-found: warn
+      - name: Restore workspace ownership
+        if: runner.os == 'Linux' && always() && env.WGE_WORKSPACE_OWNER != ''
+        run: chown -hR "$WGE_WORKSPACE_OWNER" "$GITHUB_WORKSPACE"
+  security:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, wg-easy-ci]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check build-tool prerequisites
+        run: |
+          command -v curl
+          command -v jq
+          command -v tar
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,cargo-audit
+      - run: cargo deny check
+      - run: cargo audit
+  network:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, wg-easy-ci]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build native namespace tests
+        run: cargo test -p wge-engine -p wge-platform --release --no-run --locked
+      - name: Encrypted IPv4/IPv6, leak prevention and crash recovery
+        run: |
+          test -c /dev/net/tun || { echo '::error::Expose /dev/net/tun in the runner guest to run isolated tunnel tests.'; exit 1; }
+          mkdir -p measurements
+          export WGE_HOST_NETNS="$(readlink /proc/self/ns/net)"
+          export WGE_METRICS_PATH="$PWD/measurements/tunnel-linux.json"
+          unshare --user --map-root-user --net cargo test -p wge-engine -p wge-platform --release --locked -- namespace_ --ignored --nocapture --test-threads=1
+      - name: Real resolver DNS selection and recovery in private namespaces
+        run: ./scripts/test-resolved.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tunnel-measurements-${{ github.sha }}
+          path: measurements/
+          if-no-files-found: error
+  fuzz:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, wg-easy-ci]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Check build-tool prerequisites
+        run: |
+          command -v curl
+          command -v jq
+          command -v tar
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - run: cargo fuzz run parse -- -max_total_time=60 -max_len=1048576

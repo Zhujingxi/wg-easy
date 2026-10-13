@@ -33,6 +33,8 @@ Fix concrete issues with focused regression tests without changing the UI API.
 
 ## Native service follow-up
 
+- Explicitly set socket-directory access after validating its owner and type;
+  launchd's 0077 umask must not remove the staff group's traversal permission.
 - Replace the Windows shutdown bridge's blocking receive with a Tokio oneshot.
   A listener failure must be able to shut down the runtime before SCM sends Stop.
 - Exercise server shutdown while a network mutation holds the service lock,
@@ -45,18 +47,22 @@ Fix concrete issues with focused regression tests without changing the UI API.
 
 ## Validation
 
-- `cargo test -p wge-daemon -p wge-ipc`: 25 tests pass, including explicit
+- `cargo test -p wge-daemon -p wge-ipc`: 26 tests pass, including explicit
   secret round trips, oversized outbound frames, repeated pagination cursors,
   large tunnel collections, cross-account mutations/conflicts, sorted range
   intersection, failed shutdown, pending network changes and persistent recovery status.
-  Two installed-service tests compile and are ignored by default; run them in
-  native installer CI with the explicit environment guard.
+  Two installed-service tests remain ignored by default. Both passed against the
+  actual daemon and TUN in isolated Linux user/mount/network namespaces with
+  temporary `/run` and `/var/lib`, including graceful restart, startup-off and
+  empty storage/recovery journals after cleanup. Native installer CI still needs
+  to verify the package/service-manager integration on every OS.
 - Strict Clippy passes for daemon/IPC on Linux, and IPC on Windows.
 - IPC all-target checks pass for Windows GNU and macOS arm64. The Windows
   private-directory helper passes the platform all-target check; native ACL
   descriptor tests are included for Windows CI.
-- Full daemon cross-checks could not complete here: AWS-LC requires the missing
-  MinGW compiler or macOS C toolchain/SDK. Native CI must check those builds.
+- Full Windows GNU daemon/IPC all-target checks, strict Clippy and the actual
+  daemon executable link pass with MinGW and NASM, including AWS-LC assembly.
+  macOS full-daemon cross-compilation still requires its C toolchain/SDK.
 - Packaging/CI were reviewed read-only. MSI creates a matching protected state
   ACL; runtime storage now also verifies it. Native Windows/macOS DNS, filter,
   installation and service runtime checks remain necessary.
