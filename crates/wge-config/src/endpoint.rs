@@ -12,17 +12,19 @@ use crate::{ConfigError, ErrorKind, validate_domain};
 #[serde(deny_unknown_fields)]
 pub struct Endpoint {
     pub host: String,
-    pub port: u16,
+    /// No port means SRV discovery. Literal IPs always have a port.
+    pub port: Option<u16>,
 }
 
 impl Endpoint {
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if self.port == 0 {
+        if self.port == Some(0) {
             return Err(ConfigError::new(ErrorKind::InvalidPort, "Endpoint"));
         }
         let valid = match self.host.parse::<IpAddr>() {
             Ok(address) => {
-                !address.is_unspecified()
+                self.port.is_some()
+                    && !address.is_unspecified()
                     && !address.is_multicast()
                     && !matches!(address, IpAddr::V4(address) if address.is_broadcast())
             }
@@ -40,6 +42,14 @@ impl FromStr for Endpoint {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         let invalid = || ConfigError::new(ErrorKind::InvalidEndpoint, "Endpoint");
+        if value.parse::<IpAddr>().is_ok() || !value.contains(':') {
+            let endpoint = Self {
+                host: value.to_owned(),
+                port: value.parse::<IpAddr>().is_ok().then_some(51820),
+            };
+            endpoint.validate()?;
+            return Ok(endpoint);
+        }
         let (host, port) = if let Some(rest) = value.strip_prefix('[') {
             let (host, port) = rest.split_once("]:").ok_or_else(invalid)?;
             host.parse::<Ipv6Addr>().map_err(|_| invalid())?;
@@ -56,9 +66,10 @@ impl FromStr for Endpoint {
         }
         let endpoint = Self {
             host: host.to_owned(),
-            port: port
-                .parse()
-                .map_err(|_| ConfigError::new(ErrorKind::InvalidPort, "Endpoint"))?,
+            port: Some(
+                port.parse()
+                    .map_err(|_| ConfigError::new(ErrorKind::InvalidPort, "Endpoint"))?,
+            ),
         };
         endpoint.validate()?;
         Ok(endpoint)
@@ -67,10 +78,10 @@ impl FromStr for Endpoint {
 
 impl fmt::Display for Endpoint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.host.contains(':') {
-            write!(f, "[{}]:{}", self.host, self.port)
-        } else {
-            write!(f, "{}:{}", self.host, self.port)
+        match self.port {
+            Some(port) if self.host.contains(':') => write!(f, "[{}]:{port}", self.host),
+            Some(port) => write!(f, "{}:{port}", self.host),
+            None => f.write_str(&self.host),
         }
     }
 }

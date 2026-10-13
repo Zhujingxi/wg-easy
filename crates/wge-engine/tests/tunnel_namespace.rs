@@ -20,6 +20,9 @@ use tokio::{
 use wge_config::{Endpoint, InterfaceConfig, PeerConfig, SecretKey, TunnelConfig};
 use wge_engine::{ConnectionState, RunningTunnel};
 
+#[path = "support/dns.rs"]
+mod dns;
+
 #[derive(Clone)]
 struct ServerTun {
     incoming: Arc<Mutex<mpsc::Receiver<Packet<Ip>>>>,
@@ -109,6 +112,16 @@ async fn next_packet(receiver: &mut mpsc::Receiver<Packet<Ip>>) -> Packet<Ip> {
         .unwrap()
 }
 
+async fn interface_removed(name: &str) {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while netconfig::Interface::try_from_name(name).is_ok() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("The stopped WireGuard device must release its tun interface");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires unshare --user --map-root-user --net; creates a real tun interface"]
 async fn namespace_handshake_ipv4_ipv6_cleanup_and_metrics() {
@@ -158,7 +171,7 @@ async fn namespace_handshake_ipv4_ipv6_cleanup_and_metrics() {
             preshared_key: Some(SecretKey::from_bytes(psk).unwrap()),
             endpoint: Some(Endpoint {
                 host: "127.0.0.1".into(),
-                port: 51829,
+                port: Some(51829),
             }),
             allowed_ips: vec![
                 "10.200.2.0/24".parse().unwrap(),
@@ -242,7 +255,17 @@ async fn namespace_handshake_ipv4_ipv6_cleanup_and_metrics() {
     }
     let throughput_mbps =
         (128 * 32 * 1024 * 8) as f64 / started.elapsed().as_secs_f64() / 1_000_000.0;
-    let status = client.status().await;
+    let status = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let status = client.status().await;
+            if status.tx_bytes >= 128 * 32 * 1024 {
+                break status;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("The supervised statistics snapshot must include the completed transfer");
     assert!(status.tx_bytes >= 128 * 32 * 1024);
     assert!(status.rx_bytes > 0);
     let measurement = serde_json::json!({"scenario":"native-linux-userspace-loopback", "throughput_mbps":throughput_mbps, "idle_cpu_percent":idle_cpu_percent, "resident_bytes":resident_bytes(), "payload_bytes":128*32*1024});
@@ -254,11 +277,184 @@ async fn namespace_handshake_ipv4_ipv6_cleanup_and_metrics() {
     client.stop().await.unwrap();
     server.stop().await;
     assert_eq!(std::fs::read_dir(recovery.path()).unwrap().count(), 0);
-    tokio::time::timeout(Duration::from_secs(2), async {
-        while netconfig::Interface::try_from_name("wge-test").is_ok() {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+    interface_removed("wge-test").await;
+}
+
+struct BoundUdp(std::net::IpAddr);
+
+impl gotatun::udp::UdpTransportFactory for BoundUdp {
+    type Send = gotatun::udp::socket::UdpSocket;
+    type Recv = gotatun::udp::socket::UdpSocket;
+    async fn bind(
+        &mut self,
+        params: &gotatun::udp::UdpTransportFactoryParams,
+    ) -> io::Result<(Self::Send, Self::Recv)> {
+        let mut params = params.clone();
+        params.addr = Some(self.0);
+        gotatun::udp::socket::UdpSocketFactory::default()
+            .bind(&params)
+            .await
+    }
+}
+
+struct ResolverMount(std::path::PathBuf);
+impl Drop for ResolverMount {
+    fn drop(&mut self) {
+        rustix::mount::unmount(&self.0, rustix::mount::UnmountFlags::empty()).unwrap();
+    }
+}
+
+async fn srv_server(
+    client: &SecretKey,
+    server: &SecretKey,
+    address: &str,
+    port: u16,
+) -> (
+    gotatun::device::Device<(BoundUdp, ServerTun, ServerTun)>,
+    mpsc::Sender<Packet<Ip>>,
+    mpsc::Receiver<Packet<Ip>>,
+) {
+    let (input, incoming) = mpsc::channel(128);
+    let (outgoing, output) = mpsc::channel(128);
+    let device = DeviceBuilder::new()
+        .with_udp(BoundUdp(address.parse().unwrap()))
+        .with_ip(ServerTun {
+            incoming: Arc::new(Mutex::new(incoming)),
+            outgoing,
+        })
+        .with_private_key(x25519_dalek::StaticSecret::from(*server.as_bytes()))
+        .with_listen_port(port)
+        .with_peer(
+            Peer::new((*client.public_key().as_bytes()).into())
+                .with_allowed_ips(["10.201.1.1/32".parse().unwrap()]),
+        )
+        .build()
+        .await
+        .unwrap();
+    (device, input, output)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires isolated user, mount and network namespaces; exercises real DNS and three-minute handshake expiry"]
+async fn namespace_srv_family_failover_changed_ipv6_endpoint_and_cleanup() {
+    namespace_only();
+    let host = std::env::var_os("WGE_HOST_MNTNS")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::fs::read_link("/proc/1/ns/mnt").ok())
+        .unwrap();
+    assert_ne!(
+        std::fs::read_link("/proc/self/ns/mnt").unwrap(),
+        host,
+        "Run in a private mount namespace; never replace the host resolver"
+    );
+    rustix::mount::mount_change(
+        "/",
+        rustix::mount::MountPropagationFlags::PRIVATE | rustix::mount::MountPropagationFlags::REC,
+    )
+    .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let resolver_file = directory.path().join("resolv.conf");
+    std::fs::write(
+        &resolver_file,
+        "nameserver 127.0.0.1\noptions attempts:1 timeout:1\n",
+    )
+    .unwrap();
+    let resolver_path = std::fs::canonicalize("/etc/resolv.conf").unwrap();
+    rustix::mount::mount_bind(&resolver_file, &resolver_path).unwrap();
+    let _mount = ResolverMount(resolver_path);
+    let fixture = dns::DnsFixture::bind("127.0.0.1:53").await;
+    {
+        let mut zone = fixture.zone.lock().unwrap();
+        zone.srv = vec![dns::srv(0, 100, 51830, "server.test.")];
+        zone.addresses.insert(
+            "server.test.".into(),
+            vec!["::1".parse().unwrap(), "127.0.0.1".parse().unwrap()],
+        );
+    }
+    assert!(matches!(
+        &fixture.resolver.srv_lookup("_wireguard._udp.vpn.test.").await.unwrap().answers()[0].data,
+        hickory_resolver::proto::rr::RData::SRV(record) if record.port == 51830
+    ));
+    let client_key = SecretKey::from_bytes([4; 32]).unwrap();
+    let server_key = SecretKey::from_bytes([5; 32]).unwrap();
+    let (first, _first_input, _first_output) =
+        srv_server(&client_key, &server_key, "127.0.0.1", 51830).await;
+    let config = TunnelConfig {
+        interface: InterfaceConfig {
+            private_key: client_key.clone(),
+            addresses: vec!["10.201.1.1/24".parse().unwrap()],
+            dns: vec![],
+            search_domains: vec![],
+            listen_port: None,
+            mtu: None,
+        },
+        peers: vec![PeerConfig {
+            public_key: server_key.public_key(),
+            preshared_key: None,
+            endpoint: Some("vpn.test".parse().unwrap()),
+            allowed_ips: vec!["10.201.2.0/24".parse().unwrap()],
+            persistent_keepalive: None,
+        }],
+    };
+    let recovery = directory.path().join("recovery");
+    let client = RunningTunnel::start(&config, "wge-srv", &recovery)
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let status = client.status().await;
+            if status.state == ConnectionState::Connected {
+                assert_eq!(
+                    status.peers[0].endpoint,
+                    Some("127.0.0.1:51830".parse().unwrap())
+                );
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
     })
     .await
-    .unwrap();
+    .expect("An unreachable IPv6 endpoint must fall back to IPv4");
+    let exported = wge_engine::export(&config).await.unwrap();
+    assert!(exported.contains("# wg-easy-srv: vpn.test"));
+    first.stop().await;
+    let (second, _second_input, _second_output) =
+        srv_server(&client_key, &server_key, "::1", 51831).await;
+    {
+        let mut zone = fixture.zone.lock().unwrap();
+        zone.srv = vec![dns::srv(0, 100, 51831, "moved.test.")];
+        zone.addresses
+            .insert("moved.test.".into(), vec!["::1".parse().unwrap()]);
+    }
+    tokio::time::timeout(Duration::from_secs(220), async {
+        loop {
+            let status = client.status().await;
+            if status.state == ConnectionState::Connected
+                && status.peers[0].endpoint == Some("[::1]:51831".parse().unwrap())
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    })
+    .await
+    .expect("A stale connection must discover the changed IPv6 address and port");
+    assert!(fixture.zone.lock().unwrap().srv_queries >= 3);
+    client.stop().await.unwrap();
+    second.stop().await;
+    assert_eq!(std::fs::read_dir(&recovery).unwrap().count(), 0);
+    interface_removed("wge-srv").await;
+    let unreachable = RunningTunnel::start(&config, "wge-srv", &recovery)
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(25), async {
+        while unreachable.status().await.state != ConnectionState::NoHandshake {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("Repeated discovery attempts must not report Connecting forever");
+    unreachable.stop().await.unwrap();
+    interface_removed("wge-srv").await;
+    assert_eq!(std::fs::read_dir(&recovery).unwrap().count(), 0);
 }

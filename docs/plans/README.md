@@ -32,6 +32,7 @@ root holds the scope and the rules; plans hold how a specific piece gets built.
 | [0005: Delivery and verification](0005-delivery.md) | done |
 | [0007: Service trust-boundary review](0007-service-review.md) | done |
 | [0008: Real Linux resolver verification](0008-resolved-verification.md) | done |
+| [0009: Automatic DNS SRV endpoints](0009-srv-endpoints.md) | done |
 
 ## Initial feasibility checks
 

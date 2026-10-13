@@ -192,8 +192,6 @@ fn endpoints_cover_both_families_and_validate_direct_ipc_models() {
         assert_eq!(endpoint.to_string(), value);
     }
     for value in [
-        "192.0.2.1",
-        "::1:51820",
         "[::1]",
         "[vpn.example]:42",
         "host:0",
@@ -214,7 +212,7 @@ fn endpoints_cover_both_families_and_validate_direct_ipc_models() {
     assert!(
         Endpoint {
             host: "host\nPostUp=malicious".to_owned(),
-            port: 42
+            port: Some(42)
         }
         .validate()
         .is_err()
@@ -222,11 +220,85 @@ fn endpoints_cover_both_families_and_validate_direct_ipc_models() {
     assert!(
         Endpoint {
             host: "host".to_owned(),
-            port: 0
+            port: Some(0)
         }
         .validate()
         .is_err()
     );
+}
+
+#[test]
+fn discovery_survives_storage_ipc_and_standard_ipv6_export() {
+    let mut config = config();
+    config.peers[0].endpoint = Some("vpn.example".parse().unwrap());
+    let stored = write(&config).unwrap();
+    assert!(stored.contains("# wg-easy-srv: vpn.example\nEndpoint = vpn.example:51820"));
+    assert_eq!(parse(&stored).unwrap(), config);
+    let public = config.public();
+    assert_eq!(
+        serde_json::from_str::<PublicConfig>(&serde_json::to_string(&public).unwrap()).unwrap(),
+        public
+    );
+    let exported =
+        wge_config::write_resolved(&config, &[Some("[2001:db8::5]:443".parse().unwrap())]).unwrap();
+    assert!(exported.contains("Endpoint = [2001:db8::5]:443"));
+    assert_eq!(parse(&exported).unwrap(), config);
+    let standard = exported
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(
+        parse(&standard).unwrap().peers[0].endpoint,
+        Some("[2001:db8::5]:443".parse().unwrap())
+    );
+    assert!(wge_config::write_resolved(&config, &[None]).is_err());
+    assert!(wge_config::write_resolved(&config, &[]).is_err());
+    assert!(wge_config::write_resolved(&config, &[Some("[::]:443".parse().unwrap())]).is_err());
+    assert_eq!(
+        serde_json::from_str::<Endpoint>(r#"{"host":"vpn.example","port":42}"#)
+            .unwrap()
+            .port,
+        Some(42)
+    );
+}
+
+#[test]
+fn discovery_metadata_is_validated_and_standard_imports_stay_explicit() {
+    let config = config();
+    let text = write(&config).unwrap();
+    assert!(
+        parse(&text).unwrap().peers[0]
+            .endpoint
+            .as_ref()
+            .unwrap()
+            .port
+            .is_some()
+    );
+    for host in [
+        "",
+        "bad host",
+        "192.0.2.1",
+        "_wireguard._udp.example",
+        "host:443",
+    ] {
+        let invalid = text.replace("Endpoint =", &format!("# wg-easy-srv: {host}\nEndpoint ="));
+        assert!(parse(&invalid).is_err(), "{host}");
+    }
+    let duplicate = text.replace(
+        "Endpoint =",
+        "# wg-easy-srv: vpn.example\n# wg-easy-srv: vpn.example\nEndpoint =",
+    );
+    assert!(parse(&duplicate).is_err());
+    assert!(parse(&format!("# wg-easy-srv: vpn.example\n{}", text.as_str())).is_err());
+    let missing = text.replace(
+        "Endpoint = [2001:db8::7]:51820",
+        "# wg-easy-srv: vpn.example",
+    );
+    assert!(parse(&missing).is_err());
+    for value in ["vpn.example", "192.0.2.1", "2001:db8::1", "::1:51820"] {
+        assert!(parse(&text.replace("[2001:db8::7]:51820", value)).is_err());
+    }
 }
 
 #[test]
@@ -376,6 +448,7 @@ proptest! {
         prefix6 in 0_u8..=128,
         routes in prop::collection::vec((any::<u32>(), 0_u8..=32), 1..20),
         port in 1_u16..=u16::MAX,
+        discovery in any::<bool>(),
         keepalive in prop::option::of(any::<u16>()),
         mtu in 1280_u16..=u16::MAX,
     ) {
@@ -384,7 +457,7 @@ proptest! {
         config.interface.addresses = vec![IpNetwork::new(IpAddr::V4(v4.into()), prefix4).unwrap(), IpNetwork::new(IpAddr::V6(v6.into()), prefix6).unwrap()];
         config.interface.mtu = Some(mtu);
         config.peers[0].public_key = PublicKey::from_bytes(public).unwrap();
-        config.peers[0].endpoint = Some(Endpoint { host: "vpn.example".to_owned(), port });
+        config.peers[0].endpoint = Some(Endpoint { host: "vpn.example".to_owned(), port: if discovery { None } else { Some(port) } });
         config.peers[0].persistent_keepalive = keepalive;
         config.peers[0].allowed_ips = routes.into_iter().map(|(address, prefix)| IpNetwork::new(IpAddr::V4(address.into()), prefix).unwrap()).collect();
         prop_assume!(config.peers[0].public_key != config.interface.private_key.public_key());

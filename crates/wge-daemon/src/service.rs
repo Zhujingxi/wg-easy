@@ -304,8 +304,32 @@ impl<N: Network> Service<N> {
                         "Confirm that the exported file contains a private key",
                     ));
                 }
-                let text = wge_config::write(&entry.stored.config)
-                    .map_err(|_| validation("Save a complete tunnel before exporting"))?;
+                let active = if let Some(handle) = &entry.running {
+                    N::status(handle).await
+                } else {
+                    TunnelStatus::default()
+                };
+                let text = if active.state == ConnectionState::Connected {
+                    let endpoints = entry
+                        .stored
+                        .config
+                        .peers
+                        .iter()
+                        .map(|peer| {
+                            active
+                                .peers
+                                .iter()
+                                .find(|status| status.public_key == peer.public_key)
+                                .and_then(|status| status.endpoint.as_ref()?.parse().ok())
+                        })
+                        .collect::<Vec<_>>();
+                    wge_config::write_resolved(&entry.stored.config, &endpoints)
+                        .map_err(|_| validation("Could not export the active server endpoints"))?
+                } else {
+                    wge_engine::export(&entry.stored.config)
+                        .await
+                        .map_err(crate::native::api_error)?
+                };
                 Ok(Response::Secret(SensitiveText::from_zeroizing(text)))
             }
         }

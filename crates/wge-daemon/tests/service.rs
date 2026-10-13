@@ -70,6 +70,121 @@ fn directory() -> (tempfile::TempDir, PathBuf) {
     let path = temp.path().join("tunnels");
     (temp, path)
 }
+
+#[tokio::test]
+async fn omitted_endpoint_ports_survive_save_and_service_restart() {
+    let (_temp, path) = directory();
+    let mut service = Service::open(path.clone(), TestNetwork).unwrap();
+    let mut tunnel = saved(&mut service, "1000", "Discovery", "10.8.0.0/24").await;
+    tunnel.config.peers[0].endpoint = Some("vpn.example".parse().unwrap());
+    let Response::Tunnel(saved) = service
+        .handle(
+            "1000",
+            Request::Save {
+                id: tunnel.id.clone(),
+                name: tunnel.name,
+                config: tunnel.config.clone(),
+                preshared_keys: vec![],
+            },
+        )
+        .await
+    else {
+        panic!("save failed")
+    };
+    assert_eq!(saved.config, tunnel.config);
+    drop(service);
+    let mut service = Service::open(path, TestNetwork).unwrap();
+    let Response::Tunnel(restored) = service.handle("1000", Request::Get { id: tunnel.id }).await
+    else {
+        panic!("restore failed")
+    };
+    assert_eq!(restored.config, tunnel.config);
+    assert_eq!(restored.status.state, ConnectionState::Off);
+}
+
+#[tokio::test]
+async fn connected_discovery_export_uses_the_working_ipv6_endpoint_without_dns() {
+    struct Connected;
+    impl Network for Connected {
+        type Handle = wge_config::PublicKey;
+        async fn start(
+            &mut self,
+            config: &TunnelConfig,
+            _: &str,
+        ) -> Result<Self::Handle, ApiError> {
+            Ok(config.peers[0].public_key)
+        }
+        async fn status(key: &Self::Handle) -> TunnelStatus {
+            TunnelStatus {
+                state: ConnectionState::Connected,
+                peers: vec![PeerStatus {
+                    public_key: *key,
+                    endpoint: Some("[2001:db8::5]:443".into()),
+                    last_handshake_unix: Some(1),
+                    rx_bytes: 0,
+                    tx_bytes: 0,
+                }],
+                error: None,
+            }
+        }
+        async fn stop(_: Self::Handle) -> Result<(), ApiError> {
+            Ok(())
+        }
+        async fn local_networks(&self) -> Vec<IpNetwork> {
+            vec![]
+        }
+    }
+    let (_temp, path) = directory();
+    let mut service = Service::open(path, Connected).unwrap();
+    let mut tunnel = saved(&mut service, "1000", "Discovery", "10.8.0.0/24").await;
+    tunnel.config.peers[0].endpoint = Some("vpn.example".parse().unwrap());
+    assert!(matches!(
+        service
+            .handle(
+                "1000",
+                Request::Save {
+                    id: tunnel.id.clone(),
+                    name: tunnel.name,
+                    config: tunnel.config.clone(),
+                    preshared_keys: vec![],
+                }
+            )
+            .await,
+        Response::Tunnel(_)
+    ));
+    assert!(matches!(
+        service
+            .handle(
+                "1000",
+                Request::Connect {
+                    id: tunnel.id.clone()
+                }
+            )
+            .await,
+        Response::Tunnel(_)
+    ));
+    let Response::Secret(exported) = service
+        .handle(
+            "1000",
+            Request::Export {
+                id: tunnel.id,
+                confirmed: true,
+            },
+        )
+        .await
+    else {
+        panic!("export failed")
+    };
+    assert!(
+        exported
+            .expose()
+            .contains("# wg-easy-srv: vpn.example\nEndpoint = [2001:db8::5]:443")
+    );
+    assert_eq!(
+        wge_config::parse(exported.expose()).unwrap().public(),
+        tunnel.config
+    );
+}
 #[tokio::test]
 async fn owners_are_isolated_and_restart_never_reconnects() {
     let (_temp, path) = directory();
