@@ -22,7 +22,7 @@ jobs:
       fail-fast: false
       matrix:
         os: ${{ fromJSON(inputs.hosted_platforms && '["linux", "windows", "macos"]' || '["linux"]') }}
-    runs-on: ${{ fromJSON(matrix.os == 'linux' && '["self-hosted", "linux", "x64", "wg-easy-ci"]' || matrix.os == 'windows' && '["windows-latest"]' || '["macos-latest"]') }}
+    runs-on: ${{ fromJSON(matrix.os == 'linux' && '["ubuntu-22.04"]' || matrix.os == 'windows' && '["windows-latest"]' || '["macos-latest"]') }}
     container: ${{ matrix.os == 'linux' && 'public.ecr.aws/ubuntu/ubuntu:24.04' || '' }}
     timeout-minutes: 60
     steps:
