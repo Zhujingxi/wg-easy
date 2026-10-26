@@ -153,7 +153,9 @@ jobs:
           label=system/io.github.zhujingxi.wireguardeasy
           # A runner cannot reboot mid-job; bootstrap the installed LaunchDaemon explicitly.
           sudo launchctl bootstrap system "$plist"
-          trap 'sudo launchctl kickstart -k "$label"; if test -f "$WGE_SERVICE_SMOKE_STATE"; then cargo test -p wge-daemon --test installed_service installed_service_restart_is_off --locked -- --ignored --exact --nocapture; fi; sudo launchctl bootout system "$plist"' EXIT
+          trap 'if test -f "$RUNNER_TEMP/wge-daemon.stderr"; then sudo cat "$RUNNER_TEMP/wge-daemon.stderr"; fi; sudo launchctl kickstart -k "$label"; if test -f "$WGE_SERVICE_SMOKE_STATE"; then cargo test -p wge-daemon --test installed_service installed_service_restart_is_off --locked -- --ignored --exact --nocapture; fi; sudo launchctl bootout system "$plist"' EXIT
+          sudo launchctl debug "$label" --stderr "$RUNNER_TEMP/wge-daemon.stderr"
+          sudo launchctl kickstart -k "$label"
           cargo test -p wge-daemon --test installed_service installed_service_connect_and_leave_running --locked -- --ignored --exact --nocapture
           sudo launchctl kickstart -k "$label"
           cargo test -p wge-daemon --test installed_service installed_service_restart_is_off --locked -- --ignored --exact --nocapture

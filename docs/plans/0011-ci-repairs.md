@@ -48,6 +48,9 @@ and fix defects uncovered by the checks without weakening them.
 - Match PF token ownership using the kernel's `MAXCOMLEN` byte limit instead of
   userspace `proc_name`'s longer `pbi_name`. Test this using the actual long
   test-binary name; retain PID and pre-existing-token checks.
+- Retain the installed-service client's last connection error and capture the
+  macOS LaunchDaemon's stderr during CI acceptance, so startup/access failures
+  can be diagnosed. Keep the installed plist unchanged.
 - Construct the native smoke watchdog's timeout inside its Tokio runtime,
   so recovery can restore routes/DNS rather than panic before it runs. Cover
   watchdog startup and repeated cleanup with an unprivileged regression test.
@@ -139,6 +142,13 @@ command to PF tokens; userspace `proc_name` can return a longer name. Applying
 the kernel's byte limit fixes ownership matching for long executable names,
 including the platform test binary. The new process-identity regression
 cross-checks and passes Darwin Clippy; hosted native confirmation is pending.
+On `e670996` the macOS native smoke passes, including address/route/DNS setup,
+PF reference ownership and crash cleanup. Package installation then succeeds,
+but the installed-service client times out before making its first request.
+The retry helper now reports its last connection error, and the CI LaunchDaemon
+run captures startup stderr. Acceptance-test compilation, daemon Clippy, workflow
+YAML parsing and lifecycle shell syntax pass locally; the service diagnosis is
+pending hosted execution.
 
 ## Open questions
 

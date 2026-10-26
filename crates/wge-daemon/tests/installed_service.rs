@@ -15,16 +15,18 @@ fn state_path() -> anyhow::Result<PathBuf> {
 }
 
 async fn client() -> anyhow::Result<Client> {
+    let mut last_error = None;
     tokio::time::timeout(Duration::from_secs(30), async {
         loop {
-            if let Ok(client) = Client::connect_default().await {
-                return client;
+            match Client::connect_default().await {
+                Ok(client) => return client,
+                Err(error) => last_error = Some(error),
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     })
     .await
-    .context("The installed service did not become available")
+    .with_context(|| format!("The installed service did not become available: {last_error:?}"))
 }
 
 fn tunnel(response: Response) -> anyhow::Result<Tunnel> {
