@@ -118,6 +118,26 @@ struct SavedRoute {
 }
 
 impl SavedRoute {
+    fn remove(&self, manager: &mut RouteManager) -> Result<(), Error> {
+        if let Err(error) = manager.delete(&self.native()) {
+            let missing = error.kind() == io::ErrorKind::NotFound;
+            #[cfg(unix)]
+            let missing = missing || error.raw_os_error() == Some(libc::ESRCH);
+            if missing && !manager.list()?.iter().any(|route| self.matches(route)) {
+                return Ok(());
+            }
+            return Err(io::Error::new(
+                error.kind(),
+                format!(
+                    "Could not remove route {}/{} on {}: {error}",
+                    self.destination, self.prefix, self.interface_name
+                ),
+            )
+            .into());
+        }
+        Ok(())
+    }
+
     fn native(&self) -> Route {
         let route = Route::new(self.destination, self.prefix).with_if_index(self.interface);
         let route = if let Some(gateway) = self.gateway {
@@ -304,7 +324,7 @@ impl Network {
             }
             let mut manager = RouteManager::new()?;
             for original in &network.journal.displaced_routes {
-                manager.delete(&original.native())?;
+                original.remove(&mut manager)?;
             }
             for route in routes {
                 // Record intent first, so a crash at any instruction remains recoverable.
@@ -372,10 +392,8 @@ impl Network {
             let same_interface = netconfig::Interface::try_from_index(saved.interface)
                 .and_then(|i| i.name())
                 .is_ok_and(|name| name == saved.interface_name);
-            if same_interface
-                && let Some(route) = manager.list()?.into_iter().find(|r| saved.matches(r))
-            {
-                manager.delete(&route)?;
+            if same_interface && manager.list()?.iter().any(|route| saved.matches(route)) {
+                saved.remove(&mut manager)?;
             }
         }
         for saved in &self.journal.displaced_routes {

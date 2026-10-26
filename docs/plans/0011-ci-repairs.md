@@ -35,6 +35,10 @@ and fix defects uncovered by the checks without weakening them.
   repairing a runtime failure does not require rebuilding unchanged dependencies.
 - Preserve gotatun's fatal I/O error in engine status and show public status in
   installed-service acceptance failures, so failures identify their actual cause.
+- Accept a route deletion's missing-route error only after a fresh table confirms
+  that saved route is absent, covering kernel/interface cleanup races. Preserve
+  ownership checks and include destination/interface details for other deletion
+  errors. Exercise repeated deletion against a real route in a Linux namespace.
 - Construct the native smoke watchdog's timeout inside its Tokio runtime,
   so recovery can restore routes/DNS rather than panic before it runs. Cover
   watchdog startup and repeated cleanup with an unprivileged regression test.
@@ -105,6 +109,12 @@ directory to `0700`, matching the other fixtures. Hosted runners' umask exposed
 that missing fixture setup; the production privacy check remains unchanged.
 The failure reproduces locally with umask `022`; the corrected fixture passes
 under that same umask, and engine Clippy/formatting checks pass.
+On `4eb95a0` all six Check jobs, Linux packaging and Windows packaging (including
+native networking and installed-service lifecycle) pass. macOS alone reports
+`ESRCH` during native networking. Confirmed-absent route deletion is now idempotent;
+the real namespace test deletes a route twice and reinstalls it before checking
+full-tunnel traffic and recovery. That test, platform unit tests and all three
+platform Clippy checks pass locally; macOS native confirmation is pending.
 
 ## Open questions
 
