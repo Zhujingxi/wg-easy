@@ -17,6 +17,13 @@ and fix defects uncovered by the checks without weakening them.
   multi-file unversioned license bundle stable component GUIDs, and exercise
   packaging and native service checks. WiX cannot generate GUIDs for these.
 - Fix further reproducible failures in the connected code as they surface.
+- Match absent and unspecified on-link gateways consistently when recovering
+  owned routes; Windows reports these as `0.0.0.0` or `::`. Test both families
+  and preserve the interface and real-gateway ownership checks. Include the
+  destination and interface in route-install errors for actionable diagnosis.
+- Wait for native interface removal between smoke rounds, using the same helper
+  as engine reconnects, so the second round cannot reopen an adapter being torn
+  down asynchronously.
 - Construct the native smoke watchdog's timeout inside its Tokio runtime,
   so recovery can restore routes/DNS rather than panic before it runs. Cover
   watchdog startup and repeated cleanup with an unprivileged regression test.
@@ -43,6 +50,11 @@ The watchdog regression reproduces the original reactor panic and passes with
 the fix using the actual watchdog source and platform recovery function in a
 temporary Linux harness. Windows platform tests also cross-check and pass
 Clippy with warnings denied; native Windows execution remains a hosted check.
+After that repair, native setup reports Windows error 5010 (object already
+exists), while recovery and artifact upload work. The route matching regression
+passes for absent/unspecified gateways in IPv4 and IPv6 and rejects real gateway
+and interface mismatches. Platform unit tests, Windows cross-target Clippy and
+the Linux encrypted IPv4/IPv6 cleanup namespace test pass after the route repair.
 
 ## Open questions
 

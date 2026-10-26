@@ -237,7 +237,8 @@ async fn round(directory: &Path, crash: bool) -> Result<(), Error> {
             .iter()
             .any(|saved| routes.iter().any(|route| saved.matches(route))),
         "owned routes remain after cleanup",
-    )
+    )?;
+    crate::wait_for_interface_removal(&journal.interface_name).await
 }
 
 #[tokio::test]

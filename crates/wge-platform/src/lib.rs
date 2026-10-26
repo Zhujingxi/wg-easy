@@ -141,7 +141,8 @@ impl SavedRoute {
     fn matches(&self, route: &Route) -> bool {
         let matches = route.destination() == self.destination
             && route.prefix() == self.prefix
-            && route.gateway() == self.gateway
+            && route.gateway().filter(|ip| !ip.is_unspecified())
+                == self.gateway.filter(|ip| !ip.is_unspecified())
             && route.if_index() == Some(self.interface);
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         let matches = matches && route.metric() == self.metric;
@@ -305,7 +306,15 @@ impl Network {
                 // Record intent first, so a crash at any instruction remains recoverable.
                 network.journal.routes.push(route.clone());
                 network.save()?;
-                manager.add(&route.native())?;
+                manager.add(&route.native()).map_err(|error| {
+                    io::Error::new(
+                        error.kind(),
+                        format!(
+                            "Could not add route {}/{} on {}: {error}",
+                            route.destination, route.prefix, route.interface_name
+                        ),
+                    )
+                })?;
             }
             #[cfg(target_os = "linux")]
             if config.is_all_traffic() {
@@ -822,6 +831,33 @@ mod tests {
         fn send_sync<T: Send + Sync>() {}
         send_sync::<Network>();
         send_sync::<Error>();
+    }
+
+    #[test]
+    fn saved_on_link_routes_match_unspecified_gateways_in_both_families() {
+        for (destination, prefix, gateway) in [
+            ("198.18.246.53", 32, "0.0.0.0"),
+            ("fd42:7767:66::53", 128, "::"),
+        ] {
+            let saved = SavedRoute {
+                destination: destination.parse().unwrap(),
+                prefix,
+                gateway: None,
+                interface: 7,
+                interface_name: "wge-test".into(),
+                #[cfg(target_os = "linux")]
+                table: 254,
+                #[cfg(any(target_os = "linux", target_os = "windows"))]
+                metric: Some(42760),
+                #[cfg(target_os = "macos")]
+                if_scope: false,
+            };
+            let native = saved.native();
+            assert!(saved.matches(&native));
+            assert!(saved.matches(&native.clone().with_gateway(gateway.parse().unwrap())));
+            assert!(!saved.matches(&native.clone().with_gateway(destination.parse().unwrap())));
+            assert!(!saved.matches(&native.with_if_index(8)));
+        }
     }
 
     #[test]
