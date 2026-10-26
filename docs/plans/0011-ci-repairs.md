@@ -27,6 +27,9 @@ and fix defects uncovered by the checks without weakening them.
 - Construct the native smoke watchdog's timeout inside its Tokio runtime,
   so recovery can restore routes/DNS rather than panic before it runs. Cover
   watchdog startup and repeated cleanup with an unprivileged regression test.
+- Use an IPv4 control socket for Darwin IPv4 address ioctls instead of
+  netconfig's IPv6 socket. Keep point-to-point destination and native ABI fields
+  explicit; test the IPv4 sockaddr header and byte order.
 
 No new product features or dependencies are planned.
 
@@ -55,6 +58,11 @@ exists), while recovery and artifact upload work. The route matching regression
 passes for absent/unspecified gateways in IPv4 and IPv6 and rejects real gateway
 and interface mismatches. Platform unit tests, Windows cross-target Clippy and
 the Linux encrypted IPv4/IPv6 cleanup namespace test pass after the route repair.
+The macOS package builds, then its native smoke fails with `EINVAL` from the
+IPv4 address ioctl through netconfig's IPv6 control socket. The replacement
+uses Darwin's 64-byte IPv4 alias request on an IPv4 socket. Darwin cross-target
+check and Clippy pass, including the sockaddr ABI regression; native execution
+is verified on the hosted macOS runner.
 
 ## Open questions
 
