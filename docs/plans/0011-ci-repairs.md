@@ -28,6 +28,11 @@ and fix defects uncovered by the checks without weakening them.
 - Wait for native interface removal between smoke rounds, using the same helper
   as engine reconnects, so the second round cannot reopen an adapter being torn
   down asynchronously.
+- Enumerate live IP interfaces in that helper, rather than consulting Windows'
+  persistent interface-name/LUID mapping. Test waiting for a live interface and
+  immediate completion for an absent name.
+- Save packaging build caches even if subsequent native acceptance fails, so
+  repairing a runtime failure does not require rebuilding unchanged dependencies.
 - Construct the native smoke watchdog's timeout inside its Tokio runtime,
   so recovery can restore routes/DNS rather than panic before it runs. Cover
   watchdog startup and repeated cleanup with an unprivileged regression test.
@@ -71,6 +76,10 @@ Route context narrowed Windows error 5010 to the runner's local subnet broadcast
 (`10.1.15.255/32`), which the override planner attempted to migrate. Subnet
 broadcasts now remain OS-owned. Platform unit tests and Windows/macOS cross-target
 Clippy pass after this change; native acceptance remains a hosted check.
+The Windows smoke now passes its traffic and route/DNS cleanup checks, then
+times out on interface removal. That wait now checks the live IP-interface
+table rather than retained name/LUID mappings. Its live/absent-interface test
+passes locally, as do platform unit tests and Linux/Windows/macOS Clippy checks.
 
 ## Open questions
 

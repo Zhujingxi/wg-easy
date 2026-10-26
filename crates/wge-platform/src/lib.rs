@@ -406,9 +406,14 @@ impl Network {
 /// gotatun can release its last tun handle after its stop future returns.
 pub async fn wait_for_interface_removal(name: &str) -> Result<(), Error> {
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        while netconfig::Interface::try_from_name(name).is_ok() {
+        // Windows can retain name/LUID mappings after an adapter leaves the IP stack.
+        while netconfig::list_interfaces()?
+            .iter()
+            .any(|interface| interface.name().is_ok_and(|current| current == name))
+        {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
+        Ok::<_, Error>(())
     })
     .await
     .map_err(|_| {
@@ -416,7 +421,7 @@ pub async fn wait_for_interface_removal(name: &str) -> Result<(), Error> {
             io::ErrorKind::TimedOut,
             "The previous tunnel interface has not been released",
         ))
-    })
+    })?
 }
 
 fn plan_routes(
@@ -839,6 +844,21 @@ mod tests {
         fn send_sync<T: Send + Sync>() {}
         send_sync::<Network>();
         send_sync::<Error>();
+    }
+
+    #[tokio::test]
+    async fn interface_removal_wait_checks_live_interfaces() {
+        let interface = netconfig::list_interfaces().unwrap().remove(0);
+        let name = interface.name().unwrap();
+        assert!(
+            tokio::time::timeout(
+                std::time::Duration::from_millis(30),
+                wait_for_interface_removal(&name),
+            )
+            .await
+            .is_err()
+        );
+        wait_for_interface_removal("wge-missing").await.unwrap();
     }
 
     #[test]
