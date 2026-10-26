@@ -39,6 +39,9 @@ and fix defects uncovered by the checks without weakening them.
   that saved route is absent, covering kernel/interface cleanup races. Preserve
   ownership checks and include destination/interface details for other deletion
   errors. Exercise repeated deletion against a real route in a Linux namespace.
+- Exclude the macOS loopback interface from physical-route overrides. Local
+  IPv6 addresses can have host routes on `lo0` without themselves being loopback
+  IPs, and must remain locally delivered rather than displaced into the tunnel.
 - Construct the native smoke watchdog's timeout inside its Tokio runtime,
   so recovery can restore routes/DNS rather than panic before it runs. Cover
   watchdog startup and repeated cleanup with an unprivileged regression test.
@@ -115,6 +118,10 @@ native networking and installed-service lifecycle) pass. macOS alone reports
 the real namespace test deletes a route twice and reinstalls it before checking
 full-tunnel traffic and recovery. That test, platform unit tests and all three
 platform Clippy checks pass locally; macOS native confirmation is pending.
+The next macOS error identifies a local IPv6 link-local host route on `lo0` as
+the route incorrectly selected for displacement. The planner now excludes that
+interface, in addition to loopback IP addresses. Darwin/Windows platform Clippy
+and formatting pass; the existing native smoke is the regression for this case.
 
 ## Open questions
 

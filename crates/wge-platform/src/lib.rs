@@ -600,6 +600,11 @@ fn plan_physical_overrides(
                 continue;
             }
             let interface_name = netconfig::Interface::try_from_index(interface)?.name()?;
+            // Darwin delivers local non-loopback addresses through lo0 too.
+            #[cfg(target_os = "macos")]
+            if interface_name == "lo0" {
+                continue;
+            }
             if route.prefix() == host_prefix(destination) {
                 if local.iter().any(|network| {
                     network.addr() == destination
