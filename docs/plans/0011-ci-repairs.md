@@ -42,6 +42,9 @@ and fix defects uncovered by the checks without weakening them.
 - Exclude the macOS loopback interface from physical-route overrides. Local
   IPv6 addresses can have host routes on `lo0` without themselves being loopback
   IPs, and must remain locally delivered rather than displaced into the tunnel.
+- Preserve native IPv6 link-local routes as well as loopback/multicast routes.
+  Link-scoped subnets cannot move to a different interface. Test this policy with
+  Darwin's embedded interface scope and ordinary IPv4/global IPv6 subnets.
 - Construct the native smoke watchdog's timeout inside its Tokio runtime,
   so recovery can restore routes/DNS rather than panic before it runs. Cover
   watchdog startup and repeated cleanup with an unprivileged regression test.
@@ -122,6 +125,11 @@ The next macOS error identifies a local IPv6 link-local host route on `lo0` as
 the route incorrectly selected for displacement. The planner now excludes that
 interface, in addition to loopback IP addresses. Darwin/Windows platform Clippy
 and formatting pass; the existing native smoke is the regression for this case.
+After preserving `lo0`, macOS reports an unreachable route while trying to move
+the physical link's scoped `fe80:7::/64` subnet to utun. Link-local IPv6 routes
+now remain on their original link under the existing firewall containment.
+The route-policy regression, platform unit tests and all three platform Clippy
+checks pass; native macOS verification remains pending.
 
 ## Open questions
 

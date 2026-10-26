@@ -592,11 +592,7 @@ fn plan_physical_overrides(
                 continue;
             };
             let destination = route.destination();
-            if interface == index
-                || route.prefix() == 0
-                || destination.is_loopback()
-                || destination.is_multicast()
-            {
+            if interface == index || route.prefix() == 0 || preserve_native_route(destination) {
                 continue;
             }
             let interface_name = netconfig::Interface::try_from_index(interface)?.name()?;
@@ -639,6 +635,13 @@ fn plan_physical_overrides(
         }
     }
     Ok(())
+}
+
+#[cfg(any(not(target_os = "linux"), test))]
+fn preserve_native_route(destination: IpAddr) -> bool {
+    destination.is_loopback()
+        || destination.is_multicast()
+        || matches!(destination, IpAddr::V6(address) if address.is_unicast_link_local())
 }
 
 #[cfg(any(not(target_os = "linux"), test))]
@@ -940,6 +943,23 @@ mod tests {
         }
         let ipv6 = "fd00::ffff:ffff:ffff:ffff".parse().unwrap();
         assert!(!is_local_broadcast(ipv6, "fd00::1".parse().unwrap(), 64));
+    }
+
+    #[test]
+    fn physical_overrides_preserve_routes_that_belong_to_their_local_link() {
+        for address in [
+            "127.0.0.1",
+            "::1",
+            "224.0.0.1",
+            "ff02::1",
+            "fe80::",
+            "fe80:7::",
+        ] {
+            assert!(preserve_native_route(address.parse().unwrap()));
+        }
+        for address in ["192.168.1.0", "10.1.0.0", "fd42:7767:65::", "2001:db8::"] {
+            assert!(!preserve_native_route(address.parse().unwrap()));
+        }
     }
 
     #[test]
