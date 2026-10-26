@@ -17,6 +17,9 @@ and fix defects uncovered by the checks without weakening them.
   multi-file unversioned license bundle stable component GUIDs, and exercise
   packaging and native service checks. WiX cannot generate GUIDs for these.
 - Fix further reproducible failures in the connected code as they surface.
+- Construct the native smoke watchdog's timeout inside its Tokio runtime,
+  so recovery can restore routes/DNS rather than panic before it runs. Cover
+  watchdog startup and repeated cleanup with an unprivileged regression test.
 
 No new product features or dependencies are planned.
 
@@ -32,8 +35,14 @@ build (81 tests), cargo-deny, cargo-audit, all three Linux namespace tests,
 real systemd-resolved integration and native desktop acceptance using
 Xvfb/software Vulkan. All six hosted Check jobs and Linux packaging passed
 on the initial repair commit. Windows packaging then exposed a second invalid
-auto-generated GUID in the unversioned license bundle; native installer checks
-remain to be verified after that repair.
+auto-generated GUID in the unversioned license bundle. With both GUIDs fixed,
+the MSI builds; the Windows native smoke then exposed the watchdog's runtime
+panic, which also prevented restoring DNS for artifact upload. Native networking
+and installed-service checks remain to be verified after the watchdog repair.
+The watchdog regression reproduces the original reactor panic and passes with
+the fix using the actual watchdog source and platform recovery function in a
+temporary Linux harness. Windows platform tests also cross-check and pass
+Clippy with warnings denied; native Windows execution remains a hosted check.
 
 ## Open questions
 
