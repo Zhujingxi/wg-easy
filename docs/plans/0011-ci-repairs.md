@@ -21,6 +21,10 @@ and fix defects uncovered by the checks without weakening them.
   owned routes; Windows reports these as `0.0.0.0` or `::`. Test both families
   and preserve the interface and real-gateway ownership checks. Include the
   destination and interface in route-install errors for actionable diagnosis.
+- Preserve local subnet-broadcast host routes alongside the existing limited
+  broadcast exception. Windows rejects moving its broadcast host route to the
+  tunnel; WFP/PF still contain ordinary physical-interface traffic. Test subnet
+  broadcasts without treating `/31`, `/32` or IPv6 addresses as broadcasts.
 - Wait for native interface removal between smoke rounds, using the same helper
   as engine reconnects, so the second round cannot reopen an adapter being torn
   down asynchronously.
@@ -63,6 +67,10 @@ IPv4 address ioctl through netconfig's IPv6 control socket. The replacement
 uses Darwin's 64-byte IPv4 alias request on an IPv4 socket. Darwin cross-target
 check and Clippy pass, including the sockaddr ABI regression; native execution
 is verified on the hosted macOS runner.
+Route context narrowed Windows error 5010 to the runner's local subnet broadcast
+(`10.1.15.255/32`), which the override planner attempted to migrate. Subnet
+broadcasts now remain OS-owned. Platform unit tests and Windows/macOS cross-target
+Clippy pass after this change; native acceptance remains a hosted check.
 
 ## Open questions
 

@@ -551,10 +551,7 @@ fn plan_physical_overrides(
     #[cfg(not(target_os = "linux"))]
     {
         let mut manager = RouteManager::new()?;
-        let local: Vec<_> = netconfig::list_addresses()?
-            .into_iter()
-            .map(|ip| ip.addr())
-            .collect();
+        let local = netconfig::list_addresses()?;
         for route in manager.list()? {
             let Some(interface) = route.if_index() else {
                 continue;
@@ -569,7 +566,11 @@ fn plan_physical_overrides(
             }
             let interface_name = netconfig::Interface::try_from_index(interface)?.name()?;
             if route.prefix() == host_prefix(destination) {
-                if local.contains(&destination) || endpoints.iter().any(|e| e.ip() == destination) {
+                if local.iter().any(|network| {
+                    network.addr() == destination
+                        || is_local_broadcast(destination, network.addr(), network.prefix_len())
+                }) || endpoints.iter().any(|e| e.ip() == destination)
+                {
                     continue;
                 }
                 if destination == IpAddr::V4(std::net::Ipv4Addr::BROADCAST) {
@@ -598,6 +599,13 @@ fn plan_physical_overrides(
         }
     }
     Ok(())
+}
+
+#[cfg(any(not(target_os = "linux"), test))]
+fn is_local_broadcast(destination: IpAddr, address: IpAddr, prefix: u8) -> bool {
+    address.is_ipv4()
+        && prefix < 31
+        && IpNetwork::new(address, prefix).is_ok_and(|network| network.broadcast() == destination)
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -858,6 +866,25 @@ mod tests {
             assert!(!saved.matches(&native.clone().with_gateway(destination.parse().unwrap())));
             assert!(!saved.matches(&native.with_if_index(8)));
         }
+    }
+
+    #[test]
+    fn local_broadcasts_exclude_point_to_point_hosts_and_ipv6() {
+        let destination = "10.1.15.255".parse().unwrap();
+        assert!(is_local_broadcast(
+            destination,
+            "10.1.0.4".parse().unwrap(),
+            20
+        ));
+        for (address, prefix) in [("10.1.16.4", 20), ("10.1.15.254", 31), ("10.1.15.255", 32)] {
+            assert!(!is_local_broadcast(
+                destination,
+                address.parse().unwrap(),
+                prefix
+            ));
+        }
+        let ipv6 = "fd00::ffff:ffff:ffff:ffff".parse().unwrap();
+        assert!(!is_local_broadcast(ipv6, "fd00::1".parse().unwrap(), 64));
     }
 
     #[test]
