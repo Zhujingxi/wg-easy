@@ -53,6 +53,11 @@ and fix defects uncovered by the checks without weakening them.
   can be diagnosed. Add the stderr path only to the CI-installed plist before
   its first bootstrap; avoid launchctl debug and its extra startup kickstart.
   Bound service-management commands to 30 seconds and print launchd state on exit.
+- Set the IPC socket directory's group explicitly to the service's effective
+  group after validating its ownership and permissions. macOS otherwise inherits
+  `/var/run`'s group rather than the LaunchDaemon's `staff` group, denying GUI
+  access to the restricted directory/socket. Test correcting a different group
+  as root and assert the bound socket's group in the Unix IPC integration test.
 - Disable Windows UDP ICMP connection-reset reporting at socket creation, so
   probing an offline peer cannot terminate the receiver and then the tunnel.
   Keep other setup/I/O errors visible. Test receiving after a closed-port probe
@@ -171,6 +176,16 @@ diagnostic `kickstart`, immediately after `launchctl debug` reports configuratio
 no service test runs. CI now captures first-launch stderr with a temporary
 `StandardErrorPath` entry instead, and bounds launchctl calls so this failure
 cannot hide subsequent diagnostics for an hour. The shipped plist is unchanged.
+The first `3f94268` macOS job lost runner communication during native networking
+and uploaded no logs. A rerun passes native networking, then reports IPC
+`PermissionDenied` while launchd confirms the daemon remains running. The socket
+directory now explicitly uses the service's effective group, correcting macOS
+parent-group inheritance without relaxing its `0750`/`0660` access policy or
+peer authentication. The privileged group-correction regression fails before
+the fix in a disposable Linux container and passes afterward. The Unix IPC
+integration passes as both root and an unprivileged user, including the socket
+group assertion. Daemon tests, formatting and Clippy pass. Native macOS
+confirmation is pending.
 
 ## Open questions
 

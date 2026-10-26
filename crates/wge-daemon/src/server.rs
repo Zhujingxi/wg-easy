@@ -75,6 +75,8 @@ fn prepare_socket_directory(directory: &std::path::Path) -> std::io::Result<()> 
             "Unsafe socket directory",
         ));
     }
+    // macOS inherits the parent's group, not the LaunchDaemon's configured group.
+    std::os::unix::fs::chown(directory, None, Some(rustix::process::getegid().as_raw()))?;
     // Service umasks protect files, but the GUI must traverse this socket directory.
     fs::set_permissions(directory, fs::Permissions::from_mode(mode))
 }
@@ -211,7 +213,13 @@ mod tests {
         let directory = temporary.path().join("socket");
         std::fs::create_dir(&directory).unwrap();
         std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let group = rustix::process::getegid().as_raw();
+        if rustix::process::geteuid().as_raw() == 0 {
+            let inherited_group = if group == 0 { 1 } else { 0 };
+            std::os::unix::fs::chown(&directory, None, Some(inherited_group)).unwrap();
+        }
         prepare_socket_directory(&directory).unwrap();
+        assert_eq!(std::fs::metadata(&directory).unwrap().gid(), group);
         #[cfg(target_os = "linux")]
         let expected = 0o755;
         #[cfg(target_os = "macos")]
