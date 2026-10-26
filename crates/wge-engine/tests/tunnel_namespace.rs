@@ -127,6 +127,7 @@ async fn interface_removed(name: &str) {
 async fn namespace_unreachable_peer_stays_running() {
     namespace_only();
     let directory = tempfile::tempdir().unwrap();
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     let config = wge_config::parse(
         "[Interface]\n\
          PrivateKey = AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=\n\

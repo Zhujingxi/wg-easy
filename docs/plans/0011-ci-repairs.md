@@ -100,6 +100,11 @@ that field absent and native acceptance now exercises a `/64`. Apple's
 Platform unit tests and Darwin/Windows cross-target Clippy pass; the next native
 run will confirm setup and any remaining error now includes address/restore-route
 context.
+The new unreachable-peer namespace fixture now explicitly sets its recovery
+directory to `0700`, matching the other fixtures. Hosted runners' umask exposed
+that missing fixture setup; the production privacy check remains unchanged.
+The failure reproduces locally with umask `022`; the corrected fixture passes
+under that same umask, and engine Clippy/formatting checks pass.
 
 ## Open questions
 
