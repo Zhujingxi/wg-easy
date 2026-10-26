@@ -19,7 +19,7 @@
           <File Source="$(var.DriverDir)\wintun.dll" KeyPath="yes"/>
           <File Source="$(var.DriverDir)\WINTUN-LICENSE.txt"/>
         </Component>
-        <Component Id="License" Guid="*">
+        <Component Id="License" Guid="C83F194A-8312-4B4A-A8D6-839595E3EA3A">
           <File Source="LICENSE" Name="LICENSE.txt" KeyPath="yes"/>
           <File Source="THIRD-PARTY-LICENSES.html"/>
           <File Source="SOURCE.txt"/>
