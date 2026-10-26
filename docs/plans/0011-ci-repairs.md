@@ -51,6 +51,10 @@ and fix defects uncovered by the checks without weakening them.
 - Retain the installed-service client's last connection error and capture the
   macOS LaunchDaemon's stderr during CI acceptance, so startup/access failures
   can be diagnosed. Keep the installed plist unchanged.
+- Disable Windows UDP ICMP connection-reset reporting at socket creation, so
+  probing an offline peer cannot terminate the receiver and then the tunnel.
+  Keep other setup/I/O errors visible. Test receiving after a closed-port probe
+  with IPv4, IPv6 and dual-stack sockets in the regular workspace suite.
 - Construct the native smoke watchdog's timeout inside its Tokio runtime,
   so recovery can restore routes/DNS rather than panic before it runs. Cover
   watchdog startup and repeated cleanup with an unprivileged regression test.
@@ -149,6 +153,15 @@ The retry helper now reports its last connection error, and the CI LaunchDaemon
 run captures startup stderr. Acceptance-test compilation, daemon Clippy, workflow
 YAML parsing and lifecycle shell syntax pass locally; the service diagnosis is
 pending hosted execution.
+Windows on `c63e24a` intermittently stops the installed-service tunnel with
+`channel closed`. Its closed loopback UDP endpoint can produce a Windows
+ICMP connection-reset receive error, which ends gotatun's buffered receiver
+and closes the tunnel channel. Socket creation now disables that Windows
+reporting using `SIO_UDP_CONNRESET`; no general I/O errors are suppressed.
+The new UDP regression, engine/daemon tests and engine Clippy pass locally.
+Windows socket code also cross-checks and passes Clippy using the ring backend
+for this compilation-only check; the product continues using AWS-LC.
+Native Windows validation and macOS installed-service diagnostics remain pending.
 
 ## Open questions
 

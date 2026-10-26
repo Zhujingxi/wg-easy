@@ -29,6 +29,33 @@ use crate::{
     },
 };
 
+pub(super) fn disable_udp_connreset(socket: &Socket) -> io::Result<()> {
+    let enabled: i32 = 0;
+    let mut bytes_returned = 0;
+    // An offline peer's ICMP port-unreachable must not terminate the UDP receiver.
+    // SAFETY: the socket and synchronous input/output buffers live through the call.
+    let result = unsafe {
+        WinSock::WSAIoctl(
+            socket.as_raw_socket() as usize,
+            WinSock::SIO_UDP_CONNRESET,
+            (&enabled as *const i32).cast(),
+            mem::size_of_val(&enabled) as u32,
+            std::ptr::null_mut(),
+            0,
+            &mut bytes_returned,
+            std::ptr::null_mut(),
+            None,
+        )
+    };
+    if result == WinSock::SOCKET_ERROR {
+        // SAFETY: WSAGetLastError has no preconditions and must follow the failed call.
+        return Err(io::Error::from_raw_os_error(unsafe {
+            WinSock::WSAGetLastError()
+        }));
+    }
+    Ok(())
+}
+
 pub struct SendmmsgBuf {
     buffer: Vec<u8>,
     cmsg: Box<Cmsg>,
