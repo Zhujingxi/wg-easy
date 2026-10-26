@@ -34,7 +34,7 @@ root holds the scope and the rules; plans hold how a specific piece gets built.
 | [0008: Real Linux resolver verification](0008-resolved-verification.md) | done |
 | [0009: Automatic DNS SRV endpoints](0009-srv-endpoints.md) | done |
 | [0010: GitHub-hosted CI](0010-github-actions.md) | done |
-| [0011: Repair CI and installer failures](0011-ci-repairs.md) | in progress |
+| [0011: Repair CI and installer failures](0011-ci-repairs.md) | done |
 
 ## Initial feasibility checks
 
