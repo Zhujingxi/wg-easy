@@ -286,8 +286,10 @@ fn decode_strings(bytes: &[u8]) -> Result<Vec<String>, Error> {
         ));
     }
     let units: Vec<_> = bytes
-        .chunks_exact(2)
-        .map(|part| u16::from_le_bytes([part[0], part[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|part| u16::from_le_bytes(*part))
         .collect();
     units
         .split(|unit| *unit == 0)

@@ -29,7 +29,7 @@
     </StandardDirectory>
     <StandardDirectory Id="CommonAppDataFolder">
       <Directory Id="PrivateState" Name="WireguardEasy">
-        <Component Id="SecureStorage" Guid="*" Permanent="yes">
+        <Component Id="SecureStorage" Guid="E2451B57-51D2-4FB2-93B0-077C7AE7E718" Permanent="yes">
           <CreateFolder>
             <PermissionEx Sddl="D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"/>
           </CreateFolder>
