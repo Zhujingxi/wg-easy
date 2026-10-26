@@ -61,12 +61,16 @@ and late key responses. Keyboard tests exercise Tab through scrolled editor/prev
 and verify that focused controls are visible without overriding manual scrolling.
 This does not exercise an OS Japanese candidate-picker.
 
-Optional Windows/macOS installer jobs run the installed service lifecycle and
+Windows/macOS installer jobs run the installed service lifecycle and
 the native full-tunnel checks described in
 [native-network-smoke.md](native-network-smoke.md). Successful cross-checks are
 kept distinct from these runtime tests and from physical desktop acceptance.
 
-GitHub-hosted runners could not start because of an account billing/spending
+All workflows now select GitHub-hosted runners, with Windows/macOS enabled by
+default ([plan 0010](plans/0010-github-actions.md)). The following results describe
+earlier CI runs; changing the runner configuration does not establish a new pass.
+
+Previously, GitHub-hosted runners could not start because of an account billing/spending
 limit. Linux verification was moved to the user's Proxmox self-hosted runner.
 Only builds and isolated tests are authorized there. Desktop builds provision
 dependencies inside disposable containers; Debian installation/service steps are

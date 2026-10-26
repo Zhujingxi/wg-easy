@@ -111,10 +111,11 @@ inside user, mount, PID and network namespaces. Run it as an ordinary user.
 
 See [the PRD](docs/PRD.md), [implementation plans](docs/plans/README.md) and
 [verification notes](docs/verification.md) for scope and the evidence behind
-platform support. Linux CI runs builds in disposable containers, isolated network
-tests, dependency/license audits and config fuzzing, and retains tunnel/package
-measurements. Windows/macOS builds and native checks are manual opt-in jobs;
-GitHub-hosted execution currently requires restoring the account billing allowance.
+platform support. All CI uses GitHub-hosted runners. Workspace checks run on
+Linux, Windows and macOS by default. Linux also runs isolated network tests,
+dependency/license audits and config fuzzing, retaining tunnel/package measurements.
+The Packages workflow builds all three platforms on matching pull requests,
+version tags and manual runs, including native Windows/macOS installer checks.
 
 ## Architecture
 

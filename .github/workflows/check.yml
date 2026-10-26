@@ -4,11 +4,6 @@ on:
     branches: [main, 'feat/**']
   pull_request:
   workflow_dispatch:
-    inputs:
-      hosted_platforms:
-        description: Also run Windows and macOS on GitHub-hosted runners
-        type: boolean
-        default: false
 permissions:
   contents: read
 concurrency:
@@ -16,24 +11,18 @@ concurrency:
   cancel-in-progress: true
 jobs:
   workspace:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(inputs.hosted_platforms && '["linux", "windows", "macos"]' || '["linux"]') }}
-    runs-on: ${{ fromJSON(matrix.os == 'linux' && '["ubuntu-22.04"]' || matrix.os == 'windows' && '["windows-latest"]' || '["macos-latest"]') }}
-    container: ${{ matrix.os == 'linux' && 'public.ecr.aws/ubuntu/ubuntu:24.04' || '' }}
+        os: [ubuntu-24.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
-      - name: Prepare isolated Linux build environment
+      - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
-          echo "WGE_WORKSPACE_OWNER=$(stat -c '%u:%g' "$GITHUB_WORKSPACE")" >> "$GITHUB_ENV"
-          sed -i -e 's|http://archive.ubuntu.com|http://mirrors.ustc.edu.cn|g' -e 's|http://security.ubuntu.com|http://mirrors.ustc.edu.cn|g' /etc/apt/sources.list.d/ubuntu.sources
-          apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=3 update
-          DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=3 install --no-install-recommends -y ca-certificates
-          sed -i 's|http://mirrors.ustc.edu.cn|https://mirrors.ustc.edu.cn|g' /etc/apt/sources.list.d/ubuntu.sources
-          DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=3 install --no-install-recommends -y git curl ca-certificates build-essential cmake clang pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libegl1-mesa-dev libgbm-dev libfontconfig1-dev libvulkan-dev libpipewire-0.3-dev libclang-dev libasound2-dev xvfb xauth mesa-vulkan-drivers fonts-noto-cjk
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y build-essential cmake clang pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libegl1-mesa-dev libgbm-dev libfontconfig1-dev libvulkan-dev libpipewire-0.3-dev libclang-dev libasound2-dev xvfb xauth mesa-vulkan-drivers fonts-noto-cjk
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -61,12 +50,8 @@ jobs:
           name: desktop-acceptance-${{ github.sha }}
           path: measurements/gui/
           if-no-files-found: warn
-      - name: Restore workspace ownership
-        if: runner.os == 'Linux' && always() && env.WGE_WORKSPACE_OWNER != ''
-        run: chown -hR "$WGE_WORKSPACE_OWNER" "$GITHUB_WORKSPACE"
   security:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: blacksmith-4vcpu-ubuntu-2204
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -82,10 +67,15 @@ jobs:
       - run: cargo deny check
       - run: cargo audit
   network:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: blacksmith-4vcpu-ubuntu-2204
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
+      - name: Prepare isolated network tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y dbus systemd-resolved
+          sudo modprobe tun
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -93,7 +83,7 @@ jobs:
         run: cargo test -p wge-engine -p wge-platform --release --no-run --locked
       - name: Encrypted IPv4/IPv6, leak prevention and crash recovery
         run: |
-          test -c /dev/net/tun || { echo '::error::Expose /dev/net/tun in the runner guest to run isolated tunnel tests.'; exit 1; }
+          test -c /dev/net/tun || { echo '::error::The hosted runner needs /dev/net/tun for isolated tunnel tests.'; exit 1; }
           mkdir -p measurements
           export WGE_HOST_NETNS="$(readlink /proc/self/ns/net)"
           export WGE_HOST_MNTNS="$(readlink /proc/self/ns/mnt)"
@@ -107,8 +97,7 @@ jobs:
           path: measurements/
           if-no-files-found: error
   fuzz:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: blacksmith-4vcpu-ubuntu-2204
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4

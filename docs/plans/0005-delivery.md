@@ -2,6 +2,9 @@
 
 Status: done
 
+CI runner configuration below is historical; [plan 0010](0010-github-actions.md)
+replaces it with GitHub-hosted runners and all three platforms enabled by default.
+
 Implementation is complete. Native platform and installer acceptance remains
 pending where listed below and in [verification](../verification.md).
 
