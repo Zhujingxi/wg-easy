@@ -110,7 +110,8 @@ async fn installed_service_connect_and_leave_running() -> anyhow::Result<()> {
                 running.status.state,
                 ConnectionState::Connecting | ConnectionState::NoHandshake
             ),
-            "An unreachable peer must not report Connected"
+            "Unexpected state for an unreachable peer: {:?}",
+            running.status
         );
         std::fs::write(&state_path, &id.0)?;
         Ok::<_, anyhow::Error>(())
@@ -129,7 +130,8 @@ async fn installed_service_connect_and_leave_running() -> anyhow::Result<()> {
             running.status.state,
             ConnectionState::Connecting | ConnectionState::NoHandshake
         ),
-        "Closing the GUI connection stopped its active tunnel"
+        "Unexpected tunnel status after reconnecting the GUI: {:?}",
+        running.status
     );
     Ok(())
 }

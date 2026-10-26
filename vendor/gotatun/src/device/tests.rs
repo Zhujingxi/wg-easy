@@ -25,6 +25,25 @@ use crate::packet::{Ip, Packet};
 
 pub mod mock;
 
+#[tokio::test]
+async fn failure_preserves_the_fatal_io_error() {
+    let (alice, _bob, _eve) = mock::device_pair().await;
+    assert!(alice.device.failure().is_none());
+    alice
+        .device
+        .inner
+        .read()
+        .await
+        .fatal_error
+        .send_replace(Some(super::Error::IoError(std::io::Error::other(
+            "interface removed",
+        ))));
+    assert_eq!(
+        alice.device.failure().as_deref(),
+        Some("i/o error: interface removed")
+    );
+}
+
 /// Assert that the expected number of packets is sent.
 /// We expect there to be [`packet_count`] data packets, one handshake init,
 /// one handshake resp, and one keepalive.

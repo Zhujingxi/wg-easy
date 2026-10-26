@@ -122,6 +122,40 @@ async fn interface_removed(name: &str) {
     .expect("The stopped WireGuard device must release its tun interface");
 }
 
+#[tokio::test]
+#[ignore = "requires an isolated Linux network namespace and a real tun interface"]
+async fn namespace_unreachable_peer_stays_running() {
+    namespace_only();
+    let directory = tempfile::tempdir().unwrap();
+    let config = wge_config::parse(
+        "[Interface]\n\
+         PrivateKey = AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=\n\
+         Address = 198.18.254.2/32\n\
+         [Peer]\n\
+         PublicKey = AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=\n\
+         Endpoint = 127.0.0.1:51820\n\
+         AllowedIPs = 198.18.254.1/32\n\
+         PersistentKeepalive = 1\n",
+    )
+    .unwrap();
+    let tunnel = RunningTunnel::start(&config, "wge-unreachable", directory.path())
+        .await
+        .unwrap();
+    for _ in 0..5 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let status = tunnel.status().await;
+        assert!(
+            matches!(
+                status.state,
+                ConnectionState::Connecting | ConnectionState::NoHandshake
+            ),
+            "{status:?}"
+        );
+    }
+    tunnel.stop().await.unwrap();
+    interface_removed("wge-unreachable").await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires unshare --user --map-root-user --net; creates a real tun interface"]
 async fn namespace_handshake_ipv4_ipv6_cleanup_and_metrics() {

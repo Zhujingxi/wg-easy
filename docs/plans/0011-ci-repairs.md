@@ -33,6 +33,8 @@ and fix defects uncovered by the checks without weakening them.
   immediate completion for an absent name.
 - Save packaging build caches even if subsequent native acceptance fails, so
   repairing a runtime failure does not require rebuilding unchanged dependencies.
+- Preserve gotatun's fatal I/O error in engine status and show public status in
+  installed-service acceptance failures, so failures identify their actual cause.
 - Construct the native smoke watchdog's timeout inside its Tokio runtime,
   so recovery can restore routes/DNS rather than panic before it runs. Cover
   watchdog startup and repeated cleanup with an unprivileged regression test.
@@ -71,7 +73,7 @@ The macOS package builds, then its native smoke fails with `EINVAL` from the
 IPv4 address ioctl through netconfig's IPv6 control socket. The replacement
 uses Darwin's 64-byte IPv4 alias request on an IPv4 socket. Darwin cross-target
 check and Clippy pass, including the sockaddr ABI regression; native execution
-is verified on the hosted macOS runner.
+must be verified on the hosted macOS runner.
 Route context narrowed Windows error 5010 to the runner's local subnet broadcast
 (`10.1.15.255/32`), which the override planner attempted to migrate. Subnet
 broadcasts now remain OS-owned. Platform unit tests and Windows/macOS cross-target
@@ -80,6 +82,13 @@ The Windows smoke now passes its traffic and route/DNS cleanup checks, then
 times out on interface removal. That wait now checks the live IP-interface
 table rather than retained name/LUID mappings. Its live/absent-interface test
 passes locally, as do platform unit tests and Linux/Windows/macOS Clippy checks.
+Windows native networking now passes on `9fe4e5d`, and MSI installation and
+restart-off behavior pass. The installed-service test then observes a failed
+tunnel after reconnecting its client. The engine now preserves the device's
+fatal I/O error and the acceptance assertion includes public status. The error
+accessor unit test, engine/daemon tests, core Clippy and Linux namespace tests for
+an unreachable peer and encrypted IPv4/IPv6 cleanup all pass. Windows still needs
+to report its underlying installed-service failure on the next hosted run.
 
 ## Open questions
 

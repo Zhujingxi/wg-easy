@@ -348,6 +348,11 @@ impl<T: DeviceTransports> Device<T> {
             .await
             .expect("Sender will not be dropped while Self exists");
     }
+
+    /// Describe an unrecoverable I/O failure without waiting or exposing key material.
+    pub fn failure(&self) -> Option<String> {
+        self.fatal_error.borrow().as_ref().map(ToString::to_string)
+    }
 }
 
 impl<T: DeviceTransports> Drop for Device<T> {
