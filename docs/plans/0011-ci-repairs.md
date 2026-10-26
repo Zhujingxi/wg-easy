@@ -45,6 +45,9 @@ and fix defects uncovered by the checks without weakening them.
 - Preserve native IPv6 link-local routes as well as loopback/multicast routes.
   Link-scoped subnets cannot move to a different interface. Test this policy with
   Darwin's embedded interface scope and ordinary IPv4/global IPv6 subnets.
+- Match PF token ownership using the kernel's `MAXCOMLEN` byte limit instead of
+  userspace `proc_name`'s longer `pbi_name`. Test this using the actual long
+  test-binary name; retain PID and pre-existing-token checks.
 - Construct the native smoke watchdog's timeout inside its Tokio runtime,
   so recovery can restore routes/DNS rather than panic before it runs. Cover
   watchdog startup and repeated cleanup with an unprivileged regression test.
@@ -130,6 +133,12 @@ the physical link's scoped `fe80:7::/64` subnet to utun. Link-local IPv6 routes
 now remain on their original link under the existing firewall containment.
 The route-policy regression, platform unit tests and all three platform Clippy
 checks pass; native macOS verification remains pending.
+Native macOS now completes address and route setup but cannot recognize its PF
+reference. Apple's kernel writes only `MAXCOMLEN` (16) bytes of the process
+command to PF tokens; userspace `proc_name` can return a longer name. Applying
+the kernel's byte limit fixes ownership matching for long executable names,
+including the platform test binary. The new process-identity regression
+cross-checks and passes Darwin Clippy; hosted native confirmation is pending.
 
 ## Open questions
 
