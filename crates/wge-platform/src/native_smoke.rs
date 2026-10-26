@@ -24,7 +24,9 @@ impl RecoveryWatchdog {
                 .map_err(|e| e.to_string())?;
             let mut last_error = String::new();
             for _ in 0..3 {
-                match runtime.block_on(timeout(Duration::from_secs(15), recover(&directory))) {
+                match runtime
+                    .block_on(async { timeout(Duration::from_secs(15), recover(&directory)).await })
+                {
                     Ok(Ok(())) => return Ok(()),
                     Ok(Err(error)) => last_error = error.to_string(),
                     Err(error) => last_error = error.to_string(),
@@ -58,6 +60,14 @@ impl Drop for RecoveryWatchdog {
             eprintln!("Native smoke recovery failed: {error}");
         }
     }
+}
+
+#[test]
+fn recovery_watchdog_runs_without_an_outer_runtime() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut watchdog = RecoveryWatchdog::start(&directory.path().join("recovery"));
+    watchdog.finish().unwrap();
+    watchdog.finish().unwrap();
 }
 
 fn require(condition: bool, message: &str) -> Result<(), Error> {
@@ -132,7 +142,7 @@ async fn round(directory: &Path, crash: bool) -> Result<(), Error> {
             private_key: SecretKey::from_bytes([7; 32]).unwrap(),
             addresses: vec![
                 "198.18.245.1/32".parse().unwrap(),
-                "fd42:7767:65::1/128".parse().unwrap(),
+                "fd42:7767:65::1/64".parse().unwrap(),
             ],
             dns: vec![
                 "198.18.246.53".parse().unwrap(),
@@ -227,7 +237,8 @@ async fn round(directory: &Path, crash: bool) -> Result<(), Error> {
             .iter()
             .any(|saved| routes.iter().any(|route| saved.matches(route))),
         "owned routes remain after cleanup",
-    )
+    )?;
+    crate::wait_for_interface_removal(&journal.interface_name).await
 }
 
 #[tokio::test]

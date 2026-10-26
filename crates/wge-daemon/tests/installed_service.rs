@@ -15,16 +15,18 @@ fn state_path() -> anyhow::Result<PathBuf> {
 }
 
 async fn client() -> anyhow::Result<Client> {
+    let mut last_error = None;
     tokio::time::timeout(Duration::from_secs(30), async {
         loop {
-            if let Ok(client) = Client::connect_default().await {
-                return client;
+            match Client::connect_default().await {
+                Ok(client) => return client,
+                Err(error) => last_error = Some(error),
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     })
     .await
-    .context("The installed service did not become available")
+    .with_context(|| format!("The installed service did not become available: {last_error:?}"))
 }
 
 fn tunnel(response: Response) -> anyhow::Result<Tunnel> {
@@ -110,7 +112,8 @@ async fn installed_service_connect_and_leave_running() -> anyhow::Result<()> {
                 running.status.state,
                 ConnectionState::Connecting | ConnectionState::NoHandshake
             ),
-            "An unreachable peer must not report Connected"
+            "Unexpected state for an unreachable peer: {:?}",
+            running.status
         );
         std::fs::write(&state_path, &id.0)?;
         Ok::<_, anyhow::Error>(())
@@ -129,7 +132,8 @@ async fn installed_service_connect_and_leave_running() -> anyhow::Result<()> {
             running.status.state,
             ConnectionState::Connecting | ConnectionState::NoHandshake
         ),
-        "Closing the GUI connection stopped its active tunnel"
+        "Unexpected tunnel status after reconnecting the GUI: {:?}",
+        running.status
     );
     Ok(())
 }

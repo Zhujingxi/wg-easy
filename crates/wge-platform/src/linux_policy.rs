@@ -257,6 +257,11 @@ pub(crate) mod namespace_tests {
         for route in &network.journal.routes {
             manager.add(&route.native()).unwrap();
         }
+        // Route deletion can race with the kernel removing an interface's routes.
+        let route = &network.journal.routes[0];
+        route.remove(&mut manager).unwrap();
+        route.remove(&mut manager).unwrap();
+        manager.add(&route.native()).unwrap();
         install().unwrap();
         for (source, destination) in [
             ("192.0.2.1:0", "192.0.2.53:53"),

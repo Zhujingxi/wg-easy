@@ -19,7 +19,7 @@
           <File Source="$(var.DriverDir)\wintun.dll" KeyPath="yes"/>
           <File Source="$(var.DriverDir)\WINTUN-LICENSE.txt"/>
         </Component>
-        <Component Id="License" Guid="*">
+        <Component Id="License" Guid="C83F194A-8312-4B4A-A8D6-839595E3EA3A">
           <File Source="LICENSE" Name="LICENSE.txt" KeyPath="yes"/>
           <File Source="THIRD-PARTY-LICENSES.html"/>
           <File Source="SOURCE.txt"/>
@@ -29,7 +29,7 @@
     </StandardDirectory>
     <StandardDirectory Id="CommonAppDataFolder">
       <Directory Id="PrivateState" Name="WireguardEasy">
-        <Component Id="SecureStorage" Guid="*" Permanent="yes">
+        <Component Id="SecureStorage" Guid="E2451B57-51D2-4FB2-93B0-077C7AE7E718" Permanent="yes">
           <CreateFolder>
             <PermissionEx Sddl="D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"/>
           </CreateFolder>

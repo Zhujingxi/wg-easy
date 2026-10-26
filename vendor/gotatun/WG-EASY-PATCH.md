@@ -34,3 +34,12 @@ about erasing compiler-generated register/spill copies is made.
 Remove this vendor copy when a reviewed upstream release supplies the same
 lifetime guarantees. The explicit dependency on zeroize reuses wg-easy's existing
 version; no alternative crypto backend is introduced.
+
+The local device API also exposes `failure()`, a formatted copy of its existing
+fatal I/O error, so the application can report why a tunnel stopped rather than
+discarding the cause when it polls status. No peer or key state is formatted.
+
+Windows UDP sockets disable `SIO_UDP_CONNRESET` reporting, so an offline peer's
+ICMP port-unreachable cannot end the receive task and stop the tunnel. Other
+socket setup and I/O errors still propagate. The workspace UDP regression checks
+IPv4, IPv6 and dual-stack sockets can receive after probing a closed local port.

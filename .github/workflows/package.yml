@@ -27,6 +27,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-about@0.9.2
@@ -149,11 +151,28 @@ jobs:
           sudo installer -pkg dist/wireguardeasy-desktop_0.1.0_universal.pkg -target /
           plist=/Library/LaunchDaemons/io.github.zhujingxi.wireguardeasy.plist
           label=system/io.github.zhujingxi.wireguardeasy
+          launchctl_with_timeout() {
+            python3 -c 'import subprocess, sys; print("launchctl", *sys.argv[1:], flush=True); subprocess.run(["sudo", "launchctl", *sys.argv[1:]], check=True, timeout=30)' "$@"
+          }
+          cleanup() {
+            result=$?
+            trap - EXIT
+            set +e
+            launchctl_with_timeout print "$label"
+            if test -f "$WGE_SERVICE_SMOKE_STATE"; then
+              launchctl_with_timeout kickstart -k "$label" && cargo test -p wge-daemon --test installed_service installed_service_restart_is_off --locked -- --ignored --exact --nocapture || result=1
+            fi
+            launchctl_with_timeout bootout system "$plist" || result=1
+            if test -f "$RUNNER_TEMP/wge-daemon.stderr"; then sudo cat "$RUNNER_TEMP/wge-daemon.stderr"; fi
+            exit "$result"
+          }
+          # Capture startup errors from the first launch.
+          sudo /usr/libexec/PlistBuddy -c "Add :StandardErrorPath string $RUNNER_TEMP/wge-daemon.stderr" "$plist"
           # A runner cannot reboot mid-job; bootstrap the installed LaunchDaemon explicitly.
-          sudo launchctl bootstrap system "$plist"
-          trap 'sudo launchctl kickstart -k "$label"; if test -f "$WGE_SERVICE_SMOKE_STATE"; then cargo test -p wge-daemon --test installed_service installed_service_restart_is_off --locked -- --ignored --exact --nocapture; fi; sudo launchctl bootout system "$plist"' EXIT
+          trap cleanup EXIT
+          launchctl_with_timeout bootstrap system "$plist"
           cargo test -p wge-daemon --test installed_service installed_service_connect_and_leave_running --locked -- --ignored --exact --nocapture
-          sudo launchctl kickstart -k "$label"
+          launchctl_with_timeout kickstart -k "$label"
           cargo test -p wge-daemon --test installed_service installed_service_restart_is_off --locked -- --ignored --exact --nocapture
       - uses: actions/upload-artifact@v4
         if: always()

@@ -51,22 +51,7 @@ pub(crate) fn prepare(
             "PF is configured to skip a network interface. Remove that skip rule before connecting.",
         ));
     }
-    let mut process_name = [0_u8; 64];
-    // PF records the kernel's process name, which can differ from an executable basename.
-    // SAFETY: the current PID and writable buffer are valid throughout proc_name.
-    if unsafe {
-        libc::proc_name(
-            std::process::id() as i32,
-            process_name.as_mut_ptr().cast(),
-            process_name.len() as u32,
-        )
-    } <= 0
-    {
-        return Err(failure("Cannot identify the daemon process"));
-    }
-    let process_name =
-        String::from_utf8_lossy(process_name.split(|b| *b == 0).next().unwrap_or_default())
-            .into_owned();
+    let process_name = kernel_process_name()?;
     Ok(State {
         anchor,
         interface: interface.to_owned(),
@@ -78,6 +63,28 @@ pub(crate) fn prepare(
         boot: boot_time()?,
         previous_tokens: tokens(&file)?.into_iter().map(|t| t.value).collect(),
     })
+}
+
+fn kernel_process_name() -> Result<String, Error> {
+    // PF records at most MAXCOMLEN bytes; libproc otherwise returns the longer pbi_name.
+    let mut name = [0_u8; 64];
+    // SAFETY: name is writable for its supplied length and the PID is this process's.
+    if unsafe {
+        libc::proc_name(
+            std::process::id() as i32,
+            name.as_mut_ptr().cast(),
+            name.len() as u32,
+        )
+    } <= 0
+    {
+        return Err(failure("Cannot identify the daemon process"));
+    }
+    let length = name
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(name.len())
+        .min(libc::MAXCOMLEN);
+    Ok(String::from_utf8_lossy(&name[..length]).into_owned())
 }
 
 fn rule(builder: &FilterRuleBuilder) -> Result<FilterRule, Error> {
@@ -425,6 +432,17 @@ const _: () = assert!(mem::size_of::<InterfaceList>() == 40);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pf_process_identity_uses_the_short_kernel_command_name() {
+        let executable = std::env::current_exe().unwrap();
+        let name = executable.file_name().unwrap().to_string_lossy();
+        let expected = &name.as_bytes()[..name.len().min(libc::MAXCOMLEN)];
+        assert_eq!(
+            kernel_process_name().unwrap(),
+            String::from_utf8_lossy(expected)
+        );
+    }
 
     #[test]
     fn recovery_releases_only_references_acquired_by_the_recorded_process() {

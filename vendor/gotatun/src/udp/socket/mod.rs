@@ -119,6 +119,8 @@ impl UdpSocket {
         // Construct the socket using `socket2` because we need to set the only_v6 flag.
         let udp_sock =
             socket2::Socket::new(domain, socket2::Type::DGRAM, Some(socket2::Protocol::UDP))?;
+        #[cfg(target_os = "windows")]
+        windows::disable_udp_connreset(&udp_sock)?;
         udp_sock.set_nonblocking(true)?;
         if let Some(only_v6) = opts.only_v6
             && addr.is_ipv6()

@@ -425,6 +425,8 @@ fn storage_refuses_symlinks_and_world_readable_directories() {
 #[cfg(unix)]
 #[tokio::test]
 async fn unix_socket_authenticates_and_serves_real_frames() {
+    use std::os::unix::fs::MetadataExt;
+
     let (temp, path) = directory();
     let service = Service::open(path, TestNetwork).unwrap();
     let socket = temp.path().join("control.sock");
@@ -447,6 +449,10 @@ async fn unix_socket_authenticates_and_serves_real_frames() {
     })
     .await
     .unwrap();
+    assert_eq!(
+        std::fs::metadata(&socket).unwrap().gid(),
+        rustix::process::getegid().as_raw()
+    );
     assert!(matches!(
         client.request(Request::BeginDraft).await.unwrap(),
         Response::Tunnel(Tunnel { saved: false, .. })

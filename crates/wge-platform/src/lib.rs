@@ -118,6 +118,26 @@ struct SavedRoute {
 }
 
 impl SavedRoute {
+    fn remove(&self, manager: &mut RouteManager) -> Result<(), Error> {
+        if let Err(error) = manager.delete(&self.native()) {
+            let missing = error.kind() == io::ErrorKind::NotFound;
+            #[cfg(unix)]
+            let missing = missing || error.raw_os_error() == Some(libc::ESRCH);
+            if missing && !manager.list()?.iter().any(|route| self.matches(route)) {
+                return Ok(());
+            }
+            return Err(io::Error::new(
+                error.kind(),
+                format!(
+                    "Could not remove route {}/{} on {}: {error}",
+                    self.destination, self.prefix, self.interface_name
+                ),
+            )
+            .into());
+        }
+        Ok(())
+    }
+
     fn native(&self) -> Route {
         let route = Route::new(self.destination, self.prefix).with_if_index(self.interface);
         let route = if let Some(gateway) = self.gateway {
@@ -141,7 +161,8 @@ impl SavedRoute {
     fn matches(&self, route: &Route) -> bool {
         let matches = route.destination() == self.destination
             && route.prefix() == self.prefix
-            && route.gateway() == self.gateway
+            && route.gateway().filter(|ip| !ip.is_unspecified())
+                == self.gateway.filter(|ip| !ip.is_unspecified())
             && route.if_index() == Some(self.interface);
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         let matches = matches && route.metric() == self.metric;
@@ -231,7 +252,11 @@ impl Network {
         interface.set_mtu(config.interface.mtu.unwrap_or(1420).into())?;
         for address in &config.interface.addresses {
             #[cfg(target_os = "macos")]
-            macos::add_address(&actual_name, address)?;
+            macos::add_address(&actual_name, address).map_err(|error| {
+                Error::Address(format!(
+                    "Could not assign tunnel address {address} on {actual_name}: {error}"
+                ))
+            })?;
             #[cfg(not(target_os = "macos"))]
             interface.add_address(
                 address
@@ -299,13 +324,21 @@ impl Network {
             }
             let mut manager = RouteManager::new()?;
             for original in &network.journal.displaced_routes {
-                manager.delete(&original.native())?;
+                original.remove(&mut manager)?;
             }
             for route in routes {
                 // Record intent first, so a crash at any instruction remains recoverable.
                 network.journal.routes.push(route.clone());
                 network.save()?;
-                manager.add(&route.native())?;
+                manager.add(&route.native()).map_err(|error| {
+                    io::Error::new(
+                        error.kind(),
+                        format!(
+                            "Could not add route {}/{} on {}: {error}",
+                            route.destination, route.prefix, route.interface_name
+                        ),
+                    )
+                })?;
             }
             #[cfg(target_os = "linux")]
             if config.is_all_traffic() {
@@ -359,10 +392,8 @@ impl Network {
             let same_interface = netconfig::Interface::try_from_index(saved.interface)
                 .and_then(|i| i.name())
                 .is_ok_and(|name| name == saved.interface_name);
-            if same_interface
-                && let Some(route) = manager.list()?.into_iter().find(|r| saved.matches(r))
-            {
-                manager.delete(&route)?;
+            if same_interface && manager.list()?.iter().any(|route| saved.matches(route)) {
+                saved.remove(&mut manager)?;
             }
         }
         for saved in &self.journal.displaced_routes {
@@ -375,7 +406,15 @@ impl Network {
                     .iter()
                     .any(|r| r.destination() == saved.destination && r.prefix() == saved.prefix)
             {
-                manager.add(&saved.native())?;
+                manager.add(&saved.native()).map_err(|error| {
+                    io::Error::new(
+                        error.kind(),
+                        format!(
+                            "Could not restore route {}/{} on {}: {error}",
+                            saved.destination, saved.prefix, saved.interface_name
+                        ),
+                    )
+                })?;
             }
         }
         #[cfg(target_os = "macos")]
@@ -397,9 +436,14 @@ impl Network {
 /// gotatun can release its last tun handle after its stop future returns.
 pub async fn wait_for_interface_removal(name: &str) -> Result<(), Error> {
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        while netconfig::Interface::try_from_name(name).is_ok() {
+        // Windows can retain name/LUID mappings after an adapter leaves the IP stack.
+        while netconfig::list_interfaces()?
+            .iter()
+            .any(|interface| interface.name().is_ok_and(|current| current == name))
+        {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
+        Ok::<_, Error>(())
     })
     .await
     .map_err(|_| {
@@ -407,7 +451,7 @@ pub async fn wait_for_interface_removal(name: &str) -> Result<(), Error> {
             io::ErrorKind::TimedOut,
             "The previous tunnel interface has not been released",
         ))
-    })
+    })?
 }
 
 fn plan_routes(
@@ -542,25 +586,27 @@ fn plan_physical_overrides(
     #[cfg(not(target_os = "linux"))]
     {
         let mut manager = RouteManager::new()?;
-        let local: Vec<_> = netconfig::list_addresses()?
-            .into_iter()
-            .map(|ip| ip.addr())
-            .collect();
+        let local = netconfig::list_addresses()?;
         for route in manager.list()? {
             let Some(interface) = route.if_index() else {
                 continue;
             };
             let destination = route.destination();
-            if interface == index
-                || route.prefix() == 0
-                || destination.is_loopback()
-                || destination.is_multicast()
-            {
+            if interface == index || route.prefix() == 0 || preserve_native_route(destination) {
                 continue;
             }
             let interface_name = netconfig::Interface::try_from_index(interface)?.name()?;
+            // Darwin delivers local non-loopback addresses through lo0 too.
+            #[cfg(target_os = "macos")]
+            if interface_name == "lo0" {
+                continue;
+            }
             if route.prefix() == host_prefix(destination) {
-                if local.contains(&destination) || endpoints.iter().any(|e| e.ip() == destination) {
+                if local.iter().any(|network| {
+                    network.addr() == destination
+                        || is_local_broadcast(destination, network.addr(), network.prefix_len())
+                }) || endpoints.iter().any(|e| e.ip() == destination)
+                {
                     continue;
                 }
                 if destination == IpAddr::V4(std::net::Ipv4Addr::BROADCAST) {
@@ -589,6 +635,20 @@ fn plan_physical_overrides(
         }
     }
     Ok(())
+}
+
+#[cfg(any(not(target_os = "linux"), test))]
+fn preserve_native_route(destination: IpAddr) -> bool {
+    destination.is_loopback()
+        || destination.is_multicast()
+        || matches!(destination, IpAddr::V6(address) if address.is_unicast_link_local())
+}
+
+#[cfg(any(not(target_os = "linux"), test))]
+fn is_local_broadcast(destination: IpAddr, address: IpAddr, prefix: u8) -> bool {
+    address.is_ipv4()
+        && prefix < 31
+        && IpNetwork::new(address, prefix).is_ok_and(|network| network.broadcast() == destination)
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -822,6 +882,84 @@ mod tests {
         fn send_sync<T: Send + Sync>() {}
         send_sync::<Network>();
         send_sync::<Error>();
+    }
+
+    #[tokio::test]
+    async fn interface_removal_wait_checks_live_interfaces() {
+        let interface = netconfig::list_interfaces().unwrap().remove(0);
+        let name = interface.name().unwrap();
+        assert!(
+            tokio::time::timeout(
+                std::time::Duration::from_millis(30),
+                wait_for_interface_removal(&name),
+            )
+            .await
+            .is_err()
+        );
+        wait_for_interface_removal("wge-missing").await.unwrap();
+    }
+
+    #[test]
+    fn saved_on_link_routes_match_unspecified_gateways_in_both_families() {
+        for (destination, prefix, gateway) in [
+            ("198.18.246.53", 32, "0.0.0.0"),
+            ("fd42:7767:66::53", 128, "::"),
+        ] {
+            let saved = SavedRoute {
+                destination: destination.parse().unwrap(),
+                prefix,
+                gateway: None,
+                interface: 7,
+                interface_name: "wge-test".into(),
+                #[cfg(target_os = "linux")]
+                table: 254,
+                #[cfg(any(target_os = "linux", target_os = "windows"))]
+                metric: Some(42760),
+                #[cfg(target_os = "macos")]
+                if_scope: false,
+            };
+            let native = saved.native();
+            assert!(saved.matches(&native));
+            assert!(saved.matches(&native.clone().with_gateway(gateway.parse().unwrap())));
+            assert!(!saved.matches(&native.clone().with_gateway(destination.parse().unwrap())));
+            assert!(!saved.matches(&native.with_if_index(8)));
+        }
+    }
+
+    #[test]
+    fn local_broadcasts_exclude_point_to_point_hosts_and_ipv6() {
+        let destination = "10.1.15.255".parse().unwrap();
+        assert!(is_local_broadcast(
+            destination,
+            "10.1.0.4".parse().unwrap(),
+            20
+        ));
+        for (address, prefix) in [("10.1.16.4", 20), ("10.1.15.254", 31), ("10.1.15.255", 32)] {
+            assert!(!is_local_broadcast(
+                destination,
+                address.parse().unwrap(),
+                prefix
+            ));
+        }
+        let ipv6 = "fd00::ffff:ffff:ffff:ffff".parse().unwrap();
+        assert!(!is_local_broadcast(ipv6, "fd00::1".parse().unwrap(), 64));
+    }
+
+    #[test]
+    fn physical_overrides_preserve_routes_that_belong_to_their_local_link() {
+        for address in [
+            "127.0.0.1",
+            "::1",
+            "224.0.0.1",
+            "ff02::1",
+            "fe80::",
+            "fe80:7::",
+        ] {
+            assert!(preserve_native_route(address.parse().unwrap()));
+        }
+        for address in ["192.168.1.0", "10.1.0.0", "fd42:7767:65::", "2001:db8::"] {
+            assert!(!preserve_native_route(address.parse().unwrap()));
+        }
     }
 
     #[test]

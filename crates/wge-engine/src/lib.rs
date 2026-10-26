@@ -9,10 +9,8 @@ pub use endpoint::export;
 use gotatun::device::{DefaultDeviceTransports, Device, DeviceBuilder, Peer};
 use gotatun::tun::tun_async_device::TunDevice;
 use std::{
-    future::{Future, poll_fn},
     net::SocketAddr,
     path::{Path, PathBuf},
-    task::Poll,
     time::{Duration, Instant},
 };
 use tokio::sync::{oneshot, watch};
@@ -218,10 +216,7 @@ impl Session {
     }
 
     async fn status(&mut self) -> TunnelStatus {
-        let failed = {
-            let mut failure = std::pin::pin!(self.device.wait());
-            poll_fn(|cx| Poll::Ready(failure.as_mut().poll(cx).is_ready())).await
-        };
+        let error = self.device.failure();
         let mut peers = Vec::new();
         for mut peer in self.device.peers().await {
             peers.push(PeerStatus {
@@ -235,11 +230,11 @@ impl Session {
             peer.peer.preshared_key.zeroize();
         }
         TunnelStatus {
-            state: classify(&peers, self.started.elapsed(), failed),
+            state: classify(&peers, self.started.elapsed(), error.is_some()),
             tx_bytes: peers.iter().map(|peer| peer.tx_bytes).sum(),
             rx_bytes: peers.iter().map(|peer| peer.rx_bytes).sum(),
             peers,
-            error: None,
+            error,
         }
     }
 
