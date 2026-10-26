@@ -232,7 +232,11 @@ impl Network {
         interface.set_mtu(config.interface.mtu.unwrap_or(1420).into())?;
         for address in &config.interface.addresses {
             #[cfg(target_os = "macos")]
-            macos::add_address(&actual_name, address)?;
+            macos::add_address(&actual_name, address).map_err(|error| {
+                Error::Address(format!(
+                    "Could not assign tunnel address {address} on {actual_name}: {error}"
+                ))
+            })?;
             #[cfg(not(target_os = "macos"))]
             interface.add_address(
                 address
@@ -384,7 +388,15 @@ impl Network {
                     .iter()
                     .any(|r| r.destination() == saved.destination && r.prefix() == saved.prefix)
             {
-                manager.add(&saved.native())?;
+                manager.add(&saved.native()).map_err(|error| {
+                    io::Error::new(
+                        error.kind(),
+                        format!(
+                            "Could not restore route {}/{} on {}: {error}",
+                            saved.destination, saved.prefix, saved.interface_name
+                        ),
+                    )
+                })?;
             }
         }
         #[cfg(target_os = "macos")]

@@ -41,6 +41,10 @@ and fix defects uncovered by the checks without weakening them.
 - Use an IPv4 control socket for Darwin IPv4 address ioctls instead of
   netconfig's IPv6 socket. Keep point-to-point destination and native ABI fields
   explicit; test the IPv4 sockaddr header and byte order.
+- Mark the Darwin IPv6 peer destination absent (`AF_UNSPEC`), rather than
+  advertising `::` as an explicit peer. The kernel restricts explicit peers to
+  `/128` and installs a peer host route. Native acceptance uses `/64` to exercise
+  normal IPv6 subnet addresses. Include address/route-restoration error context.
 
 No new product features or dependencies are planned.
 
@@ -89,6 +93,13 @@ fatal I/O error and the acceptance assertion includes public status. The error
 accessor unit test, engine/daemon tests, core Clippy and Linux namespace tests for
 an unreachable peer and encrypted IPv4/IPv6 cleanup all pass. Windows still needs
 to report its underlying installed-service failure on the next hosted run.
+macOS on `9fe4e5d` reaches setup but reports `EEXIST`. Its IPv6 alias request
+declared `::` as an explicit point-to-point peer. The corrected request marks
+that field absent and native acceptance now exercises a `/64`. Apple's
+`bsd/netinet6/in6.c` validates explicit peer destinations only with `/128`.
+Platform unit tests and Darwin/Windows cross-target Clippy pass; the next native
+run will confirm setup and any remaining error now includes address/restore-route
+context.
 
 ## Open questions
 

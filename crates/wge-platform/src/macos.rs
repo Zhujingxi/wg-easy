@@ -91,7 +91,11 @@ pub(crate) fn add_address(name: &str, address: &IpNetwork) -> Result<(), Error> 
     let request = Alias6 {
         name: interface_name,
         address: sockaddr(address.ip()),
-        destination: sockaddr(Ipv6Addr::UNSPECIFIED),
+        destination: libc::sockaddr_in6 {
+            sin6_len: 0,
+            sin6_family: libc::AF_UNSPEC as u8,
+            ..sockaddr(Ipv6Addr::UNSPECIFIED)
+        },
         mask: sockaddr(address.mask()),
         flags: 0x0020,
         lifetime: libc::in6_addrlifetime {

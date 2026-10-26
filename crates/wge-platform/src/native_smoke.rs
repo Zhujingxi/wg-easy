@@ -142,7 +142,7 @@ async fn round(directory: &Path, crash: bool) -> Result<(), Error> {
             private_key: SecretKey::from_bytes([7; 32]).unwrap(),
             addresses: vec![
                 "198.18.245.1/32".parse().unwrap(),
-                "fd42:7767:65::1/128".parse().unwrap(),
+                "fd42:7767:65::1/64".parse().unwrap(),
             ],
             dns: vec![
                 "198.18.246.53".parse().unwrap(),
