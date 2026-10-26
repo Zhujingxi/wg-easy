@@ -50,7 +50,9 @@ and fix defects uncovered by the checks without weakening them.
   test-binary name; retain PID and pre-existing-token checks.
 - Retain the installed-service client's last connection error and capture the
   macOS LaunchDaemon's stderr during CI acceptance, so startup/access failures
-  can be diagnosed. Keep the installed plist unchanged.
+  can be diagnosed. Add the stderr path only to the CI-installed plist before
+  its first bootstrap; avoid launchctl debug and its extra startup kickstart.
+  Bound service-management commands to 30 seconds and print launchd state on exit.
 - Disable Windows UDP ICMP connection-reset reporting at socket creation, so
   probing an offline peer cannot terminate the receiver and then the tunnel.
   Keep other setup/I/O errors visible. Test receiving after a closed-port probe
@@ -162,6 +164,13 @@ The new UDP regression, engine/daemon tests and engine Clippy pass locally.
 Windows socket code also cross-checks and passes Clippy using the ring backend
 for this compilation-only check; the product continues using AWS-LC.
 Native Windows validation and macOS installed-service diagnostics remain pending.
+On `ac77165` all six Check jobs and Linux/Windows packaging pass, including the
+new UDP regression and Windows installed-service lifecycle. macOS native
+networking also passes. Its package job hits the one-hour limit in the new
+diagnostic `kickstart`, immediately after `launchctl debug` reports configuration;
+no service test runs. CI now captures first-launch stderr with a temporary
+`StandardErrorPath` entry instead, and bounds launchctl calls so this failure
+cannot hide subsequent diagnostics for an hour. The shipped plist is unchanged.
 
 ## Open questions
 
